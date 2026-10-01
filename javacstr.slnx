@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Javacstr.Cli/Javacstr.Cli.csproj" />
+    <Project Path="src/Javacstr.Core/Javacstr.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Javacstr.Tests/Javacstr.Tests.csproj" />
+  </Folder>
+</Solution>
