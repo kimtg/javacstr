@@ -80,8 +80,9 @@ dotnet test
 ### CLI Usage
 
 ```powershell
-# Display help
+# Display help & version
 dotnet run --project src/Javacstr.Cli -- --help
+dotnet run --project src/Javacstr.Cli -- --version
 
 # Translate a single Java file to C#
 dotnet run --project src/Javacstr.Cli -- input.java -o output.cs
@@ -92,9 +93,16 @@ dotnet run --project src/Javacstr.Cli -- input.cs -o output.java
 # View colorized side-by-side diff
 dotnet run --project src/Javacstr.Cli -- input.java --diff
 
-# Batch translate an entire directory
-dotnet run --project src/Javacstr.Cli -- ./src -o ./out --to csharp
+# Stream via standard input / Unix pipeline
+cat Solution.java | dotnet run --project src/Javacstr.Cli -- - --to csharp
 
-# Interactive REPL mode
+# Batch translate an entire directory (auto-detects Java/C# files)
+dotnet run --project src/Javacstr.Cli -- ./src -o ./out
+
+# Interactive REPL mode with multi-snippet support
 dotnet run --project src/Javacstr.Cli -- --interactive
+
+# Custom translation flags
+dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --no-casing --block-namespaces
 ```
+
