@@ -65,7 +65,13 @@ public static class TypeMapper
         { "ArrayIndexOutOfBoundsException", "IndexOutOfRangeException" },
         { "UnsupportedOperationException", "NotSupportedException" },
         { "IOException", "IOException" },
-        { "NoSuchElementException", "InvalidOperationException" }
+        { "NoSuchElementException", "InvalidOperationException" },
+        { "SocketException", "SocketException" },
+        { "UnknownHostException", "SocketException" },
+        { "ClassNotFoundException", "TypeLoadException" },
+        { "InstantiationException", "MemberAccessException" },
+        { "IllegalAccessException", "UnauthorizedAccessException" },
+        { "UnsupportedLookAndFeelException", "NotSupportedException" }
     };
 
     private static readonly Dictionary<string, string> CSharpToJavaTypes = new()

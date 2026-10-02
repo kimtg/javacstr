@@ -232,7 +232,7 @@ public class JavaParser
             string? initializer = null;
             if (MatchOperator("="))
             {
-                initializer = ConsumeUntilBalanced(';', '\0').Trim();
+                initializer = ConsumeUntilStatementSemicolon();
             }
             ConsumeDelimiter(";");
 
@@ -431,7 +431,7 @@ public class JavaParser
             string? expr = null;
             if (!CheckDelimiter(";"))
             {
-                expr = ConsumeUntilDelimiter(";").Trim();
+                expr = ConsumeUntilStatementSemicolon();
             }
             ConsumeDelimiter(";");
             return new ReturnStatementNode { Expression = expr };
@@ -439,13 +439,13 @@ public class JavaParser
 
         if (MatchKeyword("throw"))
         {
-            string expr = ConsumeUntilDelimiter(";").Trim();
+            string expr = ConsumeUntilStatementSemicolon();
             ConsumeDelimiter(";");
             return new ThrowStatementNode { Expression = expr };
         }
 
         // Generic statement or variable declaration
-        string raw = ConsumeUntilDelimiter(";").Trim();
+        string raw = ConsumeUntilStatementSemicolon();
         ConsumeDelimiter(";");
 
         // Check if raw is a variable declaration: e.g. "int x = 10" or "String s"
@@ -469,7 +469,26 @@ public class JavaParser
         if (tokens.Count < 2) return false;
         if (tokens[0].Text is "this" or "super") return false;
 
-        int eqIdx = tokens.FindIndex(t => t.Text == "=");
+        int parenDepth = 0;
+        int braceDepth = 0;
+        int bracketDepth = 0;
+        int eqIdx = -1;
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            var t = tokens[i];
+            if (t.Text == "(") parenDepth++;
+            else if (t.Text == ")") { if (parenDepth > 0) parenDepth--; }
+            else if (t.Text == "{") braceDepth++;
+            else if (t.Text == "}") { if (braceDepth > 0) braceDepth--; }
+            else if (t.Text == "[") bracketDepth++;
+            else if (t.Text == "]") { if (bracketDepth > 0) bracketDepth--; }
+            else if (t.Text == "=" && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+            {
+                eqIdx = i;
+                break;
+            }
+        }
+
         if (eqIdx >= 2 && tokens[eqIdx - 2].Text == ".") return false;
 
         if (eqIdx > 1 && tokens[eqIdx - 1].Type is JavaTokenType.Identifier)
@@ -660,6 +679,37 @@ public class JavaParser
             prev = tok;
             Advance();
         }
+        return sb.ToString().Trim();
+    }
+
+    private string ConsumeUntilStatementSemicolon()
+    {
+        var sb = new StringBuilder();
+        int parenDepth = 0;
+        int braceDepth = 0;
+        int bracketDepth = 0;
+        JavaToken? prev = null;
+
+        while (!IsAtEnd())
+        {
+            var tok = Current();
+            if (tok.Text == ";" && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0)
+            {
+                break;
+            }
+
+            if (tok.Text == "(") parenDepth++;
+            else if (tok.Text == ")") { if (parenDepth > 0) parenDepth--; }
+            else if (tok.Text == "{") braceDepth++;
+            else if (tok.Text == "}") { if (braceDepth > 0) braceDepth--; }
+            else if (tok.Text == "[") bracketDepth++;
+            else if (tok.Text == "]") { if (bracketDepth > 0) bracketDepth--; }
+
+            AppendTokenWithProperSpacing(sb, tok, prev);
+            prev = tok;
+            Advance();
+        }
+
         return sb.ToString().Trim();
     }
 

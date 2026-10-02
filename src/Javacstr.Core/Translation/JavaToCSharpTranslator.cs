@@ -56,9 +56,14 @@ public class JavaToCSharpTranslator
             {
                 usings.Add("System.Text.RegularExpressions");
             }
-            else if (p.StartsWith("java.net.http") || p.StartsWith("java.net"))
+            else if (p.StartsWith("java.net.http"))
             {
                 usings.Add("System.Net.Http");
+            }
+            else if (p.StartsWith("java.net"))
+            {
+                usings.Add("System.Net");
+                usings.Add("System.Net.Sockets");
             }
             else if (p.StartsWith("java.util"))
             {
@@ -69,9 +74,9 @@ public class JavaToCSharpTranslator
             {
                 usings.Add("System.IO");
             }
-            else if (p.StartsWith("java.lang"))
+            else if (p.StartsWith("java.lang") || p.StartsWith("java.awt") || p.StartsWith("javax.swing"))
             {
-                // Already in System
+                usings.Add("System.Threading");
             }
         }
 
@@ -121,6 +126,11 @@ public class JavaToCSharpTranslator
         foreach (var m in type.Modifiers)
         {
             if (m == "final") modifiers.Add("sealed");
+            else if (m == "static" && type.Kind == "class")
+            {
+                // In Java, static nested classes are instantiable non-inner classes;
+                // In C#, nested classes are already non-inner, and 'static class' would prevent instantiation or interface implementation.
+            }
             else modifiers.Add(m);
         }
 
@@ -210,7 +220,8 @@ public class JavaToCSharpTranslator
         }
 
         string mappedType = TypeMapper.MapJavaToCSharp(field.Type);
-        sb.Append($"{mappedType} {field.Name}");
+        string fieldName = EscapeCSharpKeyword(field.Name);
+        sb.Append($"{mappedType} {fieldName}");
 
         if (!string.IsNullOrEmpty(field.Initializer))
         {
@@ -326,7 +337,8 @@ public class JavaToCSharpTranslator
         {
             var p = parameters[i];
             string mappedType = TypeMapper.MapJavaToCSharp(p.Type);
-            sb.Append($"{mappedType} {p.Name}");
+            string paramName = EscapeCSharpKeyword(p.Name);
+            sb.Append($"{mappedType} {paramName}");
             if (i < parameters.Count - 1)
             {
                 sb.Append(", ");
@@ -349,7 +361,15 @@ public class JavaToCSharpTranslator
 
             case VariableDeclarationStatementNode vDecl:
                 string vType = TypeMapper.MapJavaToCSharp(vDecl.Type);
-                sb.Append($"{vType} {vDecl.Name}");
+                bool isConst = false;
+                if (vType.StartsWith("final "))
+                {
+                    vType = vType[6..].Trim();
+                    isConst = true;
+                }
+                string vName = EscapeCSharpKeyword(vDecl.Name);
+                if (isConst) sb.Append("const ");
+                sb.Append($"{vType} {vName}");
                 if (!string.IsNullOrEmpty(vDecl.Initializer))
                 {
                     sb.Append($" = {TranslateExpression(vDecl.Initializer, vType)}");
@@ -453,13 +473,49 @@ public class JavaToCSharpTranslator
     {
         if (string.IsNullOrWhiteSpace(expr)) return expr;
 
+        // System.out.println -> Console.WriteLine
+        expr = Regex.Replace(expr, @"System\.out\.println\s*\((.*?)\)", m => $"Console.WriteLine({TranslateArguments(m.Groups[1].Value)})");
+        expr = Regex.Replace(expr, @"System\.out\.print\s*\((.*?)\)", m => $"Console.Write({TranslateArguments(m.Groups[1].Value)})");
+        expr = Regex.Replace(expr, @"System\.err\.println\s*\((.*?)\)", m => $"Console.Error.WriteLine({TranslateArguments(m.Groups[1].Value)})");
+
+        // Convert anonymous classes (e.g. Runnable, ActionListener) to lambdas
+        expr = ConvertAnonymousClassesToLambdas(expr);
+
+        // Escape C# keyword variables in expressions (prevent @@out)
+        expr = Regex.Replace(expr, @"(?<!@)\b(out|in)\s*\.", "@$1.");
+        expr = Regex.Replace(expr, @"(?<!@)\b(out|in)\s*=", "@$1 =");
+        expr = Regex.Replace(expr, @"(?<!@)\b(out|in)\s*([,;\)])", "@$1$2");
+        expr = Regex.Replace(expr, @"\(\s*(?<!@)(out|in)\s*\)", "(@$1)");
+
+        // Array length (output.length -> output.Length)
+        expr = Regex.Replace(expr, @"\b(\w+)\.length\b(?!\s*\()", "$1.Length");
+
+        // Common conversions
+        expr = Regex.Replace(expr, @"\b(\w+)\.toCharArray\(\)", "$1.ToCharArray()");
+        expr = Regex.Replace(expr, @"new\s+String\s*\(", "new string(");
+        expr = Regex.Replace(expr, @"\bInteger\.parseInt\s*\((.*?)\)", "int.Parse($1)");
+        expr = Regex.Replace(expr, @"\bDouble\.parseDouble\s*\((.*?)\)", "double.Parse($1)");
+        expr = Regex.Replace(expr, @"\bLong\.parseLong\s*\((.*?)\)", "long.Parse($1)");
+        expr = Regex.Replace(expr, @"\bBoolean\.parseBoolean\s*\((.*?)\)", "bool.Parse($1)");
+        expr = Regex.Replace(expr, @"\bMath\.random\(\)", "Random.Shared.NextDouble()");
+        expr = Regex.Replace(expr, @"\bSystem\.exit\s*\((.*?)\)", "Environment.Exit($1)");
+        expr = Regex.Replace(expr, @"\bThread\.sleep\s*\(", "Thread.Sleep(");
+        expr = Regex.Replace(expr, @"\bThread\.currentThread\(\)", "Thread.CurrentThread");
+        expr = Regex.Replace(expr, @"\b(\w+)\.interrupt\(\)", "$1.Interrupt()");
+        expr = Regex.Replace(expr, @"\b(\w+)\.start\(\)", "$1.Start()");
+        expr = Regex.Replace(expr, @"\b(\w+)\.close\(\)", "$1.Close()");
+        expr = Regex.Replace(expr, @"\b(\w+)\.readLine\(\)", "$1.ReadLine()");
+        expr = Regex.Replace(expr, @"(?<!@)\b(\w+)\.println\s*\((.*?)\)", "$1.WriteLine($2)");
+        expr = Regex.Replace(expr, @"@(\w+)\.println\s*\((.*?)\)", "@$1.WriteLine($2)");
+        expr = Regex.Replace(expr, @"(?<!@)\b(\w+)\.println\(\)", "$1.WriteLine()");
+        expr = Regex.Replace(expr, @"@(\w+)\.println\(\)", "@$1.WriteLine()");
+        expr = Regex.Replace(expr, @"(?<!@)\b(\w+)\.print\s*\((.*?)\)", "$1.Write($2)");
+        expr = Regex.Replace(expr, @"@(\w+)\.print\s*\((.*?)\)", "@$1.Write($2)");
+        expr = Regex.Replace(expr, @"\b(\w+)\.indexOf\s*\(", "$1.IndexOf(");
+        expr = Regex.Replace(expr, @"\b(\w+)\.printStackTrace\(\)", "Console.Error.WriteLine($1)");
+
         // instanceof -> is
         expr = Regex.Replace(expr, @"\binstanceof\s+([A-Za-z0-9_<>]+)", m => $"is {TypeMapper.MapJavaToCSharp(m.Groups[1].Value)}");
-
-        // System.out.println -> Console.WriteLine
-        expr = Regex.Replace(expr, @"System\.out\.println\s*\((.*)\)", m => $"Console.WriteLine({TranslateArguments(m.Groups[1].Value)})");
-        expr = Regex.Replace(expr, @"System\.out\.print\s*\((.*)\)", m => $"Console.Write({TranslateArguments(m.Groups[1].Value)})");
-        expr = Regex.Replace(expr, @"System\.err\.println\s*\((.*)\)", m => $"Console.Error.WriteLine({TranslateArguments(m.Groups[1].Value)})");
 
         // Substring math: obj.substring(a, b) -> obj.Substring(a, b - a)
         expr = Regex.Replace(expr, @"(\w+)\.substring\s*\(([^,\)]+),\s*([^,\)]+)\)", m =>
@@ -564,6 +620,99 @@ public class JavaToCSharpTranslator
         });
 
         return expr;
+    }
+
+    private static readonly HashSet<string> CSharpKeywords = new()
+    {
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char",
+        "checked", "class", "const", "continue", "decimal", "default", "delegate",
+        "do", "double", "else", "enum", "event", "explicit", "extern", "false",
+        "finally", "fixed", "float", "for", "foreach", "goto", "if", "implicit",
+        "in", "int", "interface", "internal", "is", "lock", "long", "namespace",
+        "new", "null", "object", "operator", "out", "override", "params", "private",
+        "protected", "public", "readonly", "ref", "return", "sbyte", "sealed",
+        "short", "sizeof", "stackalloc", "static", "string", "struct", "switch",
+        "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked",
+        "unsafe", "ushort", "using", "virtual", "void", "volatile", "while"
+    };
+
+    private static string EscapeCSharpKeyword(string identifier)
+    {
+        return CSharpKeywords.Contains(identifier) ? "@" + identifier : identifier;
+    }
+
+    private string ConvertAnonymousClassesToLambdas(string expr)
+    {
+        var pattern = new Regex(@"new\s+([A-Za-z0-9_<>]+)\s*\(\s*\)\s*\{");
+        while (true)
+        {
+            var match = pattern.Match(expr);
+            if (!match.Success) break;
+
+            int braceStart = match.Index + match.Length - 1;
+            int braceEnd = FindMatchingBrace(expr, braceStart);
+            if (braceEnd == -1) break;
+
+            string classBody = expr.Substring(braceStart + 1, braceEnd - braceStart - 1);
+
+            var methodMatch = Regex.Match(classBody, @"(?:@Override\s+)?public\s+(?:void|[\w<>\[\]]+)\s+(\w+)\s*\(([^)]*)\)\s*\{");
+            if (methodMatch.Success)
+            {
+                int mBraceStart = classBody.IndexOf('{', methodMatch.Index);
+                int mBraceEnd = FindMatchingBrace(classBody, mBraceStart);
+                if (mBraceEnd != -1)
+                {
+                    string mParams = methodMatch.Groups[2].Value.Trim();
+                    string mBody = classBody.Substring(mBraceStart + 1, mBraceEnd - mBraceStart - 1).Trim();
+
+                    var paramNames = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(mParams))
+                    {
+                        var parts = mParams.Split(',');
+                        foreach (var part in parts)
+                        {
+                            var tokens = part.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                            if (tokens.Length > 0)
+                            {
+                                paramNames.Add(EscapeCSharpKeyword(tokens[^1]));
+                            }
+                        }
+                    }
+
+                    string lambdaHeader = paramNames.Count == 1 ? $"({paramNames[0]})" : $"({string.Join(", ", paramNames)})";
+                    string translatedBody = TranslateExpression(mBody);
+                    string replacement = $"{lambdaHeader} => {{ {translatedBody} }}";
+
+                    expr = expr.Substring(0, match.Index) + replacement + expr.Substring(braceEnd + 1);
+                    continue;
+                }
+            }
+            break;
+        }
+        return expr;
+    }
+
+    private static int FindMatchingBrace(string text, int openIndex)
+    {
+        int depth = 0;
+        bool inString = false;
+        bool inChar = false;
+        for (int i = openIndex; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '"' && !inChar && (i == 0 || text[i - 1] != '\\')) inString = !inString;
+            else if (c == '\'' && !inString && (i == 0 || text[i - 1] != '\\')) inChar = !inChar;
+            else if (!inString && !inChar)
+            {
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0) return i;
+                }
+            }
+        }
+        return -1;
     }
 
     private string TranslateArguments(string args)
