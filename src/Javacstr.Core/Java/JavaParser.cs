@@ -437,6 +437,89 @@ public class JavaParser
             return new ReturnStatementNode { Expression = expr };
         }
 
+        if (MatchKeyword("break"))
+        {
+            string? label = null;
+            if (!CheckDelimiter(";"))
+            {
+                label = ConsumeIdentifier();
+            }
+            ConsumeDelimiter(";");
+            return new BreakStatementNode { Label = label };
+        }
+
+        if (MatchKeyword("continue"))
+        {
+            string? label = null;
+            if (!CheckDelimiter(";"))
+            {
+                label = ConsumeIdentifier();
+            }
+            ConsumeDelimiter(";");
+            return new ContinueStatementNode { Label = label };
+        }
+
+        if (MatchKeyword("synchronized"))
+        {
+            ConsumeDelimiter("(");
+            string expr = ConsumeUntilBalanced(')', '(');
+            var body = ParseStatement() ?? new BlockStatementNode();
+            return new SynchronizedStatementNode
+            {
+                Expression = expr.Trim(),
+                Body = body
+            };
+        }
+
+        if (MatchKeyword("switch"))
+        {
+            ConsumeDelimiter("(");
+            string expr = ConsumeUntilBalanced(')', '(');
+            ConsumeDelimiter("{");
+            var switchNode = new SwitchStatementNode { Expression = expr.Trim() };
+            SwitchSectionNode? currentSection = null;
+
+            while (!CheckDelimiter("}") && !IsAtEnd())
+            {
+                if (MatchKeyword("case"))
+                {
+                    string label = "case " + ConsumeUntilDelimiter(":") + ":";
+                    ConsumeDelimiter(":");
+                    if (currentSection == null || currentSection.Statements.Count > 0)
+                    {
+                        currentSection = new SwitchSectionNode();
+                        switchNode.Sections.Add(currentSection);
+                    }
+                    currentSection.Labels.Add(label);
+                }
+                else if (MatchKeyword("default"))
+                {
+                    ConsumeDelimiter(":");
+                    if (currentSection == null || currentSection.Statements.Count > 0)
+                    {
+                        currentSection = new SwitchSectionNode();
+                        switchNode.Sections.Add(currentSection);
+                    }
+                    currentSection.Labels.Add("default:");
+                }
+                else
+                {
+                    var stmt = ParseStatement();
+                    if (stmt != null)
+                    {
+                        if (currentSection == null)
+                        {
+                            currentSection = new SwitchSectionNode();
+                            switchNode.Sections.Add(currentSection);
+                        }
+                        currentSection.Statements.Add(stmt);
+                    }
+                }
+            }
+            ConsumeDelimiter("}");
+            return switchNode;
+        }
+
         if (MatchKeyword("throw"))
         {
             string expr = ConsumeUntilStatementSemicolon();

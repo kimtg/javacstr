@@ -467,19 +467,93 @@ public class JavaToCSharpTranslator
                 sb.AppendLine($"throw {TranslateExpression(thrStmt.Expression)};");
                 break;
 
-            case TryStatementNode tryStmt:
-                sb.AppendLine("try");
-                EmitSingleOrBlockStatement(tryStmt.Body, sb);
-                foreach (var c in tryStmt.CatchClauses)
+            case BreakStatementNode breakStmt:
+                if (!string.IsNullOrEmpty(breakStmt.Label))
+                    sb.AppendLine($"goto {breakStmt.Label};");
+                else
+                    sb.AppendLine("break;");
+                break;
+
+            case ContinueStatementNode:
+                sb.AppendLine("continue;");
+                break;
+
+            case SynchronizedStatementNode syncStmt:
+                sb.AppendLine($"lock ({TranslateExpression(syncStmt.Expression)})");
+                EmitSingleOrBlockStatement(syncStmt.Body, sb);
+                break;
+
+            case SwitchStatementNode switchStmt:
+                sb.AppendLine($"switch ({TranslateExpression(switchStmt.Expression)})");
+                sb.AppendLine("{");
+                foreach (var section in switchStmt.Sections)
                 {
-                    string exType = TypeMapper.MapJavaToCSharp(c.ExceptionType, _options.MapGui);
-                    sb.AppendLine($"catch ({exType} {c.VariableName})");
-                    EmitSingleOrBlockStatement(c.Body, sb);
+                    foreach (var lbl in section.Labels)
+                    {
+                        string translatedLabel = Regex.Replace(lbl, @"case\s+(.*?):", m => $"case {TranslateExpression(m.Groups[1].Value.Trim())}:");
+                        sb.AppendLine(translatedLabel);
+                    }
+                    foreach (var s in section.Statements)
+                    {
+                        EmitStatement(s, sb);
+                    }
                 }
-                if (tryStmt.FinallyBlock != null)
+                sb.AppendLine("}");
+                break;
+
+            case TryStatementNode tryStmt:
+                if (!string.IsNullOrEmpty(tryStmt.ResourceSpecification))
                 {
-                    sb.AppendLine("finally");
-                    EmitSingleOrBlockStatement(tryStmt.FinallyBlock, sb);
+                    var resources = tryStmt.ResourceSpecification.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    bool hasCatchOrFinally = tryStmt.CatchClauses.Count > 0 || tryStmt.FinallyBlock != null;
+
+                    if (hasCatchOrFinally)
+                    {
+                        sb.AppendLine("try");
+                        sb.AppendLine("{");
+                    }
+
+                    foreach (var res in resources)
+                    {
+                        string trimmed = res.Trim();
+                        if (string.IsNullOrEmpty(trimmed)) continue;
+                        string translatedRes = TranslateExpression(trimmed);
+                        sb.AppendLine($"using ({translatedRes})");
+                    }
+
+                    EmitSingleOrBlockStatement(tryStmt.Body, sb);
+
+                    if (hasCatchOrFinally)
+                    {
+                        sb.AppendLine("}");
+                        foreach (var c in tryStmt.CatchClauses)
+                        {
+                            string exType = TypeMapper.MapJavaToCSharp(c.ExceptionType, _options.MapGui);
+                            sb.AppendLine($"catch ({exType} {c.VariableName})");
+                            EmitSingleOrBlockStatement(c.Body, sb);
+                        }
+                        if (tryStmt.FinallyBlock != null)
+                        {
+                            sb.AppendLine("finally");
+                            EmitSingleOrBlockStatement(tryStmt.FinallyBlock, sb);
+                        }
+                    }
+                }
+                else
+                {
+                    sb.AppendLine("try");
+                    EmitSingleOrBlockStatement(tryStmt.Body, sb);
+                    foreach (var c in tryStmt.CatchClauses)
+                    {
+                        string exType = TypeMapper.MapJavaToCSharp(c.ExceptionType, _options.MapGui);
+                        sb.AppendLine($"catch ({exType} {c.VariableName})");
+                        EmitSingleOrBlockStatement(c.Body, sb);
+                    }
+                    if (tryStmt.FinallyBlock != null)
+                    {
+                        sb.AppendLine("finally");
+                        EmitSingleOrBlockStatement(tryStmt.FinallyBlock, sb);
+                    }
                 }
                 break;
 
@@ -584,8 +658,24 @@ public class JavaToCSharpTranslator
         expr = Regex.Replace(expr, @"(\w+)\.put\s*\(([^,\)]+),\s*([^,\)]+)\)", "$1[$2] = $3");
         // .containsKey(k) -> .ContainsKey(k)
         expr = Regex.Replace(expr, @"(\w+)\.containsKey\s*\(([^,\)]+)\)", "$1.ContainsKey($2)");
+        expr = Regex.Replace(expr, @"(\w+)\.containsValue\s*\(([^,\)]+)\)", "$1.ContainsValue($2)");
+        expr = Regex.Replace(expr, @"(\w+)\.keySet\(\)", "$1.Keys");
+        expr = Regex.Replace(expr, @"(\w+)\.values\(\)", "$1.Values");
+        expr = Regex.Replace(expr, @"(\w+)\.clear\(\)", "$1.Clear()");
+        expr = Regex.Replace(expr, @"(\w+)\.isEmpty\(\)", "$1.Count == 0");
 
-        // String methods
+        // String methods & Formatting
+        expr = Regex.Replace(expr, @"\bString\.format\s*\(", "string.Format(");
+        expr = Regex.Replace(expr, @"\bString\.join\s*\(", "string.Join(");
+        expr = Regex.Replace(expr, @"\bObjects\.equals\s*\((.*?),\s*(.*?)\)", "Equals($1, $2)");
+        expr = Regex.Replace(expr, @"\bArrays\.toString\s*\((.*?)\)", "string.Join(\", \", $1)");
+        expr = Regex.Replace(expr, @"\bInteger\.MAX_VALUE\b", "int.MaxValue");
+        expr = Regex.Replace(expr, @"\bInteger\.MIN_VALUE\b", "int.MinValue");
+        expr = Regex.Replace(expr, @"\bLong\.MAX_VALUE\b", "long.MaxValue");
+        expr = Regex.Replace(expr, @"\bLong\.MIN_VALUE\b", "long.MinValue");
+        expr = Regex.Replace(expr, @"\bDouble\.MAX_VALUE\b", "double.MaxValue");
+        expr = Regex.Replace(expr, @"\bDouble\.MIN_VALUE\b", "double.MinValue");
+
         expr = Regex.Replace(expr, @"(\w+)\.toLowerCase\(\)", "$1.ToLower()");
         expr = Regex.Replace(expr, @"(\w+)\.toUpperCase\(\)", "$1.ToUpper()");
         expr = Regex.Replace(expr, @"(\w+)\.trim\(\)", "$1.Trim()");
@@ -805,38 +895,47 @@ public class JavaToCSharpTranslator
                 }
                 return $"{target}Click += {inner}";
             }, RegexOptions.Singleline);
-
-            // Sockets & Networking
-            expr = Regex.Replace(expr, @"\bServerSocket\b", "TcpListener");
-            expr = Regex.Replace(expr, @"\bSocket\b", "TcpClient");
-            expr = Regex.Replace(expr, @"\bPrintWriter\b", "StreamWriter");
-            expr = Regex.Replace(expr, @"\bBufferedReader\b", "StreamReader");
-            expr = Regex.Replace(expr, @"\bUnknownHostException\b", "SocketException");
-            expr = Regex.Replace(expr, @"!?\bThread\.(?:currentThread\(\)|CurrentThread)\.isInterrupted\(\)", m => m.Value.StartsWith("!") ? "true" : "false");
-            expr = Regex.Replace(expr, @"(\w+)\.toString\(\)", "$1.ToString()");
-
-            expr = Regex.Replace(expr, @"\bnew\s+TcpListener\s*\((.*?)\)", m => $"new TcpListener(IPAddress.Any, {m.Groups[1].Value}); serverSocket.Start()");
-            expr = Regex.Replace(expr, @"(\w+)\.accept\(\)", "$1.AcceptTcpClient()");
-            expr = Regex.Replace(expr, @"\bnew\s+TcpClient\s*\(([^,]+),\s*([^)]+)\)", "new TcpClient($1, $2)");
-            expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.getOutputStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
-            expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.GetStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
-            expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.getInputStream\(\)\)\)", "new StreamReader($1.GetStream())");
-            expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.GetStream\(\)\)\)", "new StreamReader($1.GetStream())");
-            expr = Regex.Replace(expr, @"(\w+)\.getInetAddress\(\)\.getHostAddress\(\)", "((IPEndPoint)$1.Client.RemoteEndPoint).Address.ToString()");
-            expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)\.getHostName\(\)", "Dns.GetHostName()");
-            expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)", "IPAddress.Loopback");
-            expr = Regex.Replace(expr, @"\bserverSocket\.close\(\)", "serverSocket.Stop()");
-            expr = Regex.Replace(expr, @"\bserverSocket\.Close\(\)", "serverSocket.Stop()");
-            expr = Regex.Replace(expr, @"new\s+Thread\s*\(\s*new\s+(\w+)\s*\((.*?)\)\s*\)", "new Thread(new $1($2).Run) { IsBackground = true }");
-
-            // NetworkInterface & Enumeration mappings
-            expr = Regex.Replace(expr, @"\bNetworkInterface\.getNetworkInterfaces\(\)", "NetworkInterface.GetAllNetworkInterfaces().Cast<NetworkInterface>().GetEnumerator()");
-            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.hasMoreElements\(\)", "$1.MoveNext()");
-            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.nextElement\(\)", "$1.Current");
-            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.isLoopback\(\)", "$1.NetworkInterfaceType == NetworkInterfaceType.Loopback");
-            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getInetAddresses\(\)", "$1.GetIPProperties().UnicastAddresses.Select(u => u.Address).GetEnumerator()");
-            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getHostAddress\(\)", "$1.ToString()");
         }
+
+        // Sockets & Networking & I/O Streams
+        expr = Regex.Replace(expr, @"\bServerSocket\b", "TcpListener");
+        expr = Regex.Replace(expr, @"\bSocket\b", "TcpClient");
+        expr = Regex.Replace(expr, @"\bPrintWriter\b", "StreamWriter");
+        expr = Regex.Replace(expr, @"\bBufferedReader\b", "StreamReader");
+        expr = Regex.Replace(expr, @"\bBufferedWriter\b", "StreamWriter");
+        expr = Regex.Replace(expr, @"\bFileReader\b", "StreamReader");
+        expr = Regex.Replace(expr, @"\bFileWriter\b", "StreamWriter");
+        expr = Regex.Replace(expr, @"\bUnknownHostException\b", "SocketException");
+        expr = Regex.Replace(expr, @"!?\bThread\.(?:currentThread\(\)|CurrentThread)\.isInterrupted\(\)", m => m.Value.StartsWith("!") ? "true" : "false");
+        expr = Regex.Replace(expr, @"(\w+)\.toString\(\)", "$1.ToString()");
+
+        expr = Regex.Replace(expr, @"\bnew\s+TcpListener\s*\((.*?)\)", m => $"new TcpListener(IPAddress.Any, {m.Groups[1].Value}); serverSocket.Start()");
+        expr = Regex.Replace(expr, @"(\w+)\.accept\(\)", "$1.AcceptTcpClient()");
+        expr = Regex.Replace(expr, @"\bnew\s+TcpClient\s*\(([^,]+),\s*([^)]+)\)", "new TcpClient($1, $2)");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.getOutputStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.GetStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.getInputStream\(\)\)\)", "new StreamReader($1.GetStream())");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.GetStream\(\)\)\)", "new StreamReader($1.GetStream())");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:FileReader|StreamReader)\s*\((.*?)\)\)", "new StreamReader($1)");
+        expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\(new\s+(?:FileWriter|StreamWriter)\s*\((.*?)\)\)", "new StreamWriter($1)");
+        expr = Regex.Replace(expr, @"(\w+)\.getInetAddress\(\)\.getHostAddress\(\)", "((IPEndPoint)$1.Client.RemoteEndPoint).Address.ToString()");
+        expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)\.getHostName\(\)", "Dns.GetHostName()");
+        expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)", "IPAddress.Loopback");
+        expr = Regex.Replace(expr, @"\bserverSocket\.close\(\)", "serverSocket.Stop()");
+        expr = Regex.Replace(expr, @"\bserverSocket\.Close\(\)", "serverSocket.Stop()");
+        expr = Regex.Replace(expr, @"new\s+Thread\s*\(\s*new\s+(\w+)\s*\((.*?)\)\s*\)", "new Thread(new $1($2).Run) { IsBackground = true }");
+
+        // NetworkInterface & Enumeration mappings
+        expr = Regex.Replace(expr, @"\bNetworkInterface\.getNetworkInterfaces\(\)", "NetworkInterface.GetAllNetworkInterfaces().Cast<NetworkInterface>().GetEnumerator()");
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.hasMoreElements\(\)", "$1.MoveNext()");
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.nextElement\(\)", "$1.Current");
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.isLoopback\(\)", "$1.NetworkInterfaceType == NetworkInterfaceType.Loopback");
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getInetAddresses\(\)", "$1.GetIPProperties().UnicastAddresses.Select(u => u.Address).GetEnumerator()");
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getHostAddress\(\)", "$1.ToString()");
+
+        // Collection methods
+        expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.contains\s*\(([^,\)]+)\)", "$1.Contains($2)");
+        expr = Regex.Replace(expr, @"(?<!\w)(?<!\.)(\w+)\.add\s*\(([^,\)]+)\)", "$1.Add($2)");
 
         // Char arithmetic
         expr = Regex.Replace(expr, @"(\w+)\s*(\[[^\]]+\])\s*\+=\s*([^;]+)", m => $"{m.Groups[1].Value}{m.Groups[2].Value} = (char)({m.Groups[1].Value}{m.Groups[2].Value} + {m.Groups[3].Value.Trim()})");

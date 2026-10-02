@@ -16,6 +16,9 @@ A high-fidelity, bidirectional source code translator between **Java** and **C#*
   - `@Override` $\longleftrightarrow$ `override`
   - `final` $\longleftrightarrow$ `readonly` / `const` / `sealed`
   - `instanceof` $\longleftrightarrow$ `is`
+  - `try (...) { ... }` (try-with-resources) $\longleftrightarrow$ `using (...) { ... }`
+  - `synchronized (lock) { ... }` $\longleftrightarrow$ `lock (lock) { ... }`
+  - `switch (expr) { case ...: default: }`, `break;`, `continue;`
   - Constructor chaining: `super(...)` / `this(...)` inside constructor body $\longleftrightarrow$ `: base(...)` / `: this(...)` on constructor header
   - Auto-properties $\longleftrightarrow$ JavaBean getter and setter methods
   - Naming conventions: `camelCase` $\longleftrightarrow$ `PascalCase` method conversions
@@ -24,7 +27,12 @@ A high-fidelity, bidirectional source code translator between **Java** and **C#*
   - `List<T>`, `ArrayList<T>`, `Map<K, V>`, `HashMap<K, V>`, `HashSet<T>` $\longleftrightarrow$ `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`
   - Indexing: `list.get(i)` / `list.set(i, v)` $\longleftrightarrow$ `list[i]`
   - Map indexing: `map.get(k)` / `map.put(k, v)` $\longleftrightarrow$ `map[k]`
+  - Map inspection: `map.keySet()` / `map.values()` $\longleftrightarrow$ `map.Keys` / `map.Values`
   - String: `length()` $\longleftrightarrow$ `Length`, `substring(begin, end)` $\longleftrightarrow$ `Substring(begin, end - begin)`
+  - String interpolation: `$"Hello, {name}!"` $\longleftrightarrow$ `String.format(...)` / `"Hello, " + name + "!"`
+  - Formatting & Joining: `String.format(...)` $\longleftrightarrow$ `string.Format(...)`, `String.join(...)` $\longleftrightarrow$ `string.Join(...)`
+  - I/O & Networking: `BufferedReader`/`FileReader`/`PrintWriter`/`FileWriter` $\longleftrightarrow$ `StreamReader`/`StreamWriter`, `ServerSocket`/`Socket` $\longleftrightarrow$ `TcpListener`/`TcpClient`
+  - Min/Max constants: `Integer.MAX_VALUE`, `Long.MAX_VALUE`, `Double.MAX_VALUE` $\longleftrightarrow$ `int.MaxValue`, `long.MaxValue`, `double.MaxValue`
   - Math: `Math.max`, `Math.min`, `Math.abs`, `Math.sqrt`, `Math.ceil`, etc.
 - **Regular Expressions**:
   - `Pattern.compile(...)` / `Matcher` / `find()` / `group(...)` $\longleftrightarrow$ `new Regex(...)` / `Match` / `match.Success` / `match.Groups[...]`
@@ -60,16 +68,20 @@ javacstr/
 │   └── Javacstr.Cli/               # Command-line application (Spectre.Console)
 │       └── Program.cs
 ├── tests/
-│   └── Javacstr.Tests/             # xUnit test suite (14 automated tests)
+│   └── Javacstr.Tests/             # xUnit test suite (30 automated tests)
 │       ├── JavaParserTests.cs
 │       ├── JavaToCSharpTests.cs
 │       ├── CSharpToJavaTests.cs
+│       ├── AdvancedLanguageFeatureTests.cs
+│       ├── ChatProgramTranslationTests.cs
 │       ├── RegexTranslationTests.cs
 │       ├── HttpsTranslationTests.cs
 │       ├── GuiTranslationTests.cs
 │       └── RoundtripTests.cs
 └── examples/
-    └── demo/UserAccount.java
+    ├── demo/UserAccount.java
+    ├── demo/Chat.java
+    └── demo/Chat.cs
 ```
 
 ---
