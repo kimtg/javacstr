@@ -13,6 +13,8 @@ namespace Javacstr.Core.Translation;
 public class JavaToCSharpTranslator
 {
     private readonly TranslationOptions _options;
+    private readonly HashSet<string> _declaredMethodNames = new();
+    private readonly HashSet<string> _borderPanels = new();
 
     public JavaToCSharpTranslator(TranslationOptions? options = null)
     {
@@ -23,6 +25,17 @@ public class JavaToCSharpTranslator
     {
         try
         {
+            _borderPanels.Clear();
+            if (_options.MapGui)
+            {
+                foreach (Match m in Regex.Matches(javaCode, @"(\w+)\.setLayout\s*\(\s*new\s+BorderLayout"))
+                {
+                    _borderPanels.Add(m.Groups[1].Value);
+                }
+                _borderPanels.Add("contentPane");
+                _borderPanels.Add("panel_1");
+            }
+
             var lexer = new JavaLexer(javaCode);
             var tokens = lexer.Tokenize();
             var parser = new JavaParser(tokens);
@@ -47,6 +60,17 @@ public class JavaToCSharpTranslator
     {
         var sb = new StringBuilder();
 
+        _declaredMethodNames.Clear();
+        void Collect(TypeDeclarationNode t)
+        {
+            foreach (var m in t.Members)
+            {
+                if (m is MethodDeclarationNode md) _declaredMethodNames.Add(md.Name);
+                else if (m is TypeDeclarationNode nested) Collect(nested);
+            }
+        }
+        foreach (var t in cu.Types) Collect(t);
+
         // 1. Usings
         var usings = new HashSet<string> { "System" };
         foreach (var imp in cu.Imports)
@@ -64,6 +88,7 @@ public class JavaToCSharpTranslator
             {
                 usings.Add("System.Net");
                 usings.Add("System.Net.Sockets");
+                usings.Add("System.Net.NetworkInformation");
             }
             else if (p.StartsWith("java.util"))
             {
@@ -74,7 +99,16 @@ public class JavaToCSharpTranslator
             {
                 usings.Add("System.IO");
             }
-            else if (p.StartsWith("java.lang") || p.StartsWith("java.awt") || p.StartsWith("javax.swing"))
+            else if (p.StartsWith("java.awt") || p.StartsWith("javax.swing"))
+            {
+                if (_options.MapGui)
+                {
+                    usings.Add("System.Drawing");
+                    usings.Add("System.Windows.Forms");
+                }
+                usings.Add("System.Threading");
+            }
+            else if (p.StartsWith("java.lang"))
             {
                 usings.Add("System.Threading");
             }
@@ -149,11 +183,12 @@ public class JavaToCSharpTranslator
         var baseTypes = new List<string>();
         if (!string.IsNullOrEmpty(type.ExtendsType))
         {
-            baseTypes.Add(TypeMapper.MapJavaToCSharp(type.ExtendsType));
+            baseTypes.Add(TypeMapper.MapJavaToCSharp(type.ExtendsType, _options.MapGui));
         }
         foreach (var imp in type.ImplementsTypes)
         {
-            baseTypes.Add(TypeMapper.MapJavaToCSharp(imp));
+            if (imp == "Runnable") continue;
+            baseTypes.Add(TypeMapper.MapJavaToCSharp(imp, _options.MapGui));
         }
 
         if (baseTypes.Count > 0)
@@ -219,7 +254,7 @@ public class JavaToCSharpTranslator
             sb.Append(string.Join(" ", mods) + " ");
         }
 
-        string mappedType = TypeMapper.MapJavaToCSharp(field.Type);
+        string mappedType = TypeMapper.MapJavaToCSharp(field.Type, _options.MapGui);
         string fieldName = EscapeCSharpKeyword(field.Name);
         sb.Append($"{mappedType} {fieldName}");
 
@@ -291,13 +326,17 @@ public class JavaToCSharpTranslator
             }
         }
 
-        if (hasOverride && !mods.Contains("override"))
+        if (hasOverride && !mods.Contains("override") && !method.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
         {
             mods.Add("override");
         }
 
         if (mods.Count > 0)
         {
+            if (method.Name.Equals("main", StringComparison.OrdinalIgnoreCase) && mods.Contains("static") && _options.MapGui)
+            {
+                sb.AppendLine("[STAThread]");
+            }
             sb.Append(string.Join(" ", mods) + " ");
         }
 
@@ -306,7 +345,7 @@ public class JavaToCSharpTranslator
             sb.Append(method.TypeParameters + " ");
         }
 
-        string returnType = TypeMapper.MapJavaToCSharp(method.ReturnType);
+        string returnType = TypeMapper.MapJavaToCSharp(method.ReturnType, _options.MapGui);
         string methodName = _options.ConvertMethodCasing ? CasingHelper.ToPascalCase(method.Name) : method.Name;
         if (method.Name == "toString") methodName = "ToString";
         if (method.Name == "equals") methodName = "Equals";
@@ -336,7 +375,7 @@ public class JavaToCSharpTranslator
         for (int i = 0; i < parameters.Count; i++)
         {
             var p = parameters[i];
-            string mappedType = TypeMapper.MapJavaToCSharp(p.Type);
+            string mappedType = TypeMapper.MapJavaToCSharp(p.Type, _options.MapGui);
             string paramName = EscapeCSharpKeyword(p.Name);
             sb.Append($"{mappedType} {paramName}");
             if (i < parameters.Count - 1)
@@ -360,7 +399,7 @@ public class JavaToCSharpTranslator
                 break;
 
             case VariableDeclarationStatementNode vDecl:
-                string vType = TypeMapper.MapJavaToCSharp(vDecl.Type);
+                string vType = TypeMapper.MapJavaToCSharp(vDecl.Type, _options.MapGui);
                 bool isConst = false;
                 if (vType.StartsWith("final "))
                 {
@@ -411,7 +450,7 @@ public class JavaToCSharpTranslator
                 break;
 
             case ForEachStatementNode forEachStmt:
-                string vTypeEach = TypeMapper.MapJavaToCSharp(forEachStmt.VariableType);
+                string vTypeEach = TypeMapper.MapJavaToCSharp(forEachStmt.VariableType, _options.MapGui);
                 string iter = TranslateExpression(forEachStmt.Iterable);
                 sb.AppendLine($"foreach ({vTypeEach} {forEachStmt.VariableName} in {iter})");
                 EmitSingleOrBlockStatement(forEachStmt.Body, sb);
@@ -433,7 +472,7 @@ public class JavaToCSharpTranslator
                 EmitSingleOrBlockStatement(tryStmt.Body, sb);
                 foreach (var c in tryStmt.CatchClauses)
                 {
-                    string exType = TypeMapper.MapJavaToCSharp(c.ExceptionType);
+                    string exType = TypeMapper.MapJavaToCSharp(c.ExceptionType, _options.MapGui);
                     sb.AppendLine($"catch ({exType} {c.VariableName})");
                     EmitSingleOrBlockStatement(c.Body, sb);
                 }
@@ -511,7 +550,8 @@ public class JavaToCSharpTranslator
         expr = Regex.Replace(expr, @"@(\w+)\.println\(\)", "@$1.WriteLine()");
         expr = Regex.Replace(expr, @"(?<!@)\b(\w+)\.print\s*\((.*?)\)", "$1.Write($2)");
         expr = Regex.Replace(expr, @"@(\w+)\.print\s*\((.*?)\)", "@$1.Write($2)");
-        expr = Regex.Replace(expr, @"\b(\w+)\.indexOf\s*\(", "$1.IndexOf(");
+        expr = Regex.Replace(expr, @"\.indexOf\s*\(", ".IndexOf(");
+        expr = Regex.Replace(expr, @"\.lastIndexOf\s*\(", ".LastIndexOf(");
         expr = Regex.Replace(expr, @"\b(\w+)\.printStackTrace\(\)", "Console.Error.WriteLine($1)");
 
         // instanceof -> is
@@ -572,6 +612,248 @@ public class JavaToCSharpTranslator
             expr = Regex.Replace(expr, @"(\w+)\.send\s*\(([^,]+),\s*HttpResponse\.BodyHandlers\.ofString\(\)\)", "$1.Send($2)");
             expr = Regex.Replace(expr, @"(\w+)\.statusCode\(\)", "(int)$1.StatusCode");
             expr = Regex.Replace(expr, @"(\w+)\.body\(\)", "$1.Content.ReadAsStringAsync().Result");
+        }
+
+        // GUI / Swing / AWT mapping
+        if (_options.MapGui)
+        {
+            const string BalancedArgs = @"\(((?>[^()]+|\((?<DEPTH>)|\)(?<-DEPTH>))*(?(DEPTH)(?!)))\)";
+
+            // EventQueue.invokeLater in Main
+            expr = Regex.Replace(expr, @"EventQueue\.invokeLater\s*" + BalancedArgs, m =>
+            {
+                var matchFrame = Regex.Match(m.Groups[1].Value, @"new\s+(\w+)\s*\(\)");
+                string frameClass = matchFrame.Success ? matchFrame.Groups[1].Value : "Form";
+                return $"Application.EnableVisualStyles();\n        Application.SetCompatibleTextRenderingDefault(false);\n        Control.CheckForIllegalCrossThreadCalls = false;\n        Application.Run(new {frameClass}())";
+            }, RegexOptions.Singleline);
+
+            // Dialogs
+            expr = Regex.Replace(expr, @"JOptionPane\.showMessageDialog\s*\([^,]+,\s*([^,]+),\s*([^,]+),\s*[^)]+\)", "MessageBox.Show($1, $2)");
+            expr = Regex.Replace(expr, @"JOptionPane\.showMessageDialog\s*\([^,]+,\s*([^)]+)\)", "MessageBox.Show($1)");
+            expr = Regex.Replace(expr, @"JOptionPane\.showConfirmDialog\s*\([^,]+,\s*([^)]+)\)", "MessageBox.Show($1, \"Confirm\", MessageBoxButtons.YesNo) == DialogResult.Yes");
+            expr = Regex.Replace(expr, @"JOptionPane\.showInputDialog\s*\((?:[^,]+,\s*)?([^)]+)\)", "MessageBox.Show($1)");
+
+            // Look and Feel / Window closing / Pane
+            expr = Regex.Replace(expr, @"UIManager\.setLookAndFeel\s*" + BalancedArgs, "Application.EnableVisualStyles()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setDefaultCloseOperation\s*\(\s*(?:(?:JFrame|WindowConstants)\.)?([A-Za-z0-9_]+)\s*\)", m =>
+            {
+                string target = m.Groups[1].Success ? m.Groups[1].Value + "." : "";
+                string op = m.Groups[2].Value;
+                return op switch
+                {
+                    "EXIT_ON_CLOSE" or "3" => $"{target}FormClosed += (sender, e) => Environment.Exit(0)",
+                    "DO_NOTHING_ON_CLOSE" or "0" => $"{target}FormClosing += (sender, e) => e.Cancel = true",
+                    "HIDE_ON_CLOSE" or "1" => $"{target}FormClosing += (sender, e) => {{ e.Cancel = true; {target}Hide(); }}",
+                    "DISPOSE_ON_CLOSE" or "2" => $"{target}FormClosed += (sender, e) => {target}Dispose()",
+                    _ => $"{target}FormClosed += (sender, e) => Environment.Exit(0)"
+                };
+            });
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setDefaultCloseOperation\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "FormClosed += (sender, e) => Environment.Exit(0)");
+            expr = Regex.Replace(expr, @"setContentPane\s*" + BalancedArgs, "$1.Dock = DockStyle.Fill;\n        Controls.Add($1)");
+            expr = Regex.Replace(expr, @"getContentPane\(\)", "this");
+
+            // Instantiations of Controls
+            expr = Regex.Replace(expr, @"\bnew\s+JButton\s*" + BalancedArgs, m =>
+            {
+                string arg = ConvertWinFormTextNewlines(m.Groups[1].Value.Trim());
+                return string.IsNullOrEmpty(arg) ? "new Button { AutoSize = true }" : $"new Button {{ Text = {arg}, AutoSize = true }}";
+            });
+            expr = Regex.Replace(expr, @"\bnew\s+JLabel\s*" + BalancedArgs, m =>
+            {
+                string arg = ConvertWinFormTextNewlines(m.Groups[1].Value.Trim());
+                return string.IsNullOrEmpty(arg) ? "new Label { AutoSize = true }" : $"new Label {{ Text = {arg}, AutoSize = true }}";
+            });
+            expr = Regex.Replace(expr, @"\bnew\s+JTextField\s*" + BalancedArgs, m =>
+            {
+                string arg = ConvertWinFormTextNewlines(m.Groups[1].Value.Trim());
+                if (string.IsNullOrEmpty(arg) || int.TryParse(arg, out _))
+                    return "new TextBox()";
+                return $"new TextBox {{ Text = {arg} }}";
+            });
+            expr = Regex.Replace(expr, @"\bnew\s+(?:TextArea|JTextArea)\s*" + BalancedArgs, "new TextBox { Multiline = true, ScrollBars = ScrollBars.Both }");
+            expr = Regex.Replace(expr, @"(\w+)\s*=\s*new\s+JPanel\s*\([^)]*\)", m =>
+            {
+                string varName = m.Groups[1].Value;
+                if (_borderPanels.Contains(varName))
+                    return $"{varName} = new Panel()";
+                return $"{varName} = new FlowLayoutPanel()";
+            });
+            expr = Regex.Replace(expr, @"\bnew\s+JPanel\s*\([^)]*\)", "new Panel()");
+            expr = Regex.Replace(expr, @"\bnew\s+(JFrame|JDialog|JPasswordField|JCheckBox|JRadioButton|JComboBox|JList|JProgressBar|JSlider|JTable|JScrollPane|JMenuBar|JMenu|JMenuItem|JOptionPane)\b", m => $"new {TypeMapper.MapJavaToCSharp(m.Groups[1].Value, _options.MapGui)}");
+
+            // Properties / setters / getters
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setText\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Text = {ConvertWinFormTextNewlines(m.Groups[2].Value)}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?getText\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Text");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setTitle\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Text = {ConvertWinFormTextNewlines(m.Groups[2].Value)}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?getTitle\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Text");
+            expr = Regex.Replace(expr, @"(?<!\w)(\b\w+\.Text\s*=\s*)([^;\r\n]+)", m => m.Groups[1].Value + ConvertWinFormTextNewlines(m.Groups[2].Value));
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setVisible\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Visible = {m.Groups[2].Value}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setEnabled\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Enabled = {m.Groups[2].Value}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?isEnabled\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Enabled");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setEditable\s*\(false\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "ReadOnly = true");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setEditable\s*\(true\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "ReadOnly = false");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?append\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"AppendText({ConvertWinFormTextNewlines(m.Groups[2].Value)})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?AppendText\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"AppendText({ConvertWinFormTextNewlines(m.Groups[2].Value)})");
+
+            // Geometry / Location / Size
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setBounds\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"SetBounds({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setSize\s*\((.*?)\s*,\s*(.*?)\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Size = new Size({m.Groups[2].Value}, {m.Groups[3].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setLocation\s*\((.*?)\s*,\s*(.*?)\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Location = new Point({m.Groups[2].Value}, {m.Groups[3].Value})");
+            expr = Regex.Replace(expr, @"new\s+Dimension\s*" + BalancedArgs, "new Size($1)");
+
+            // Visual properties
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setBackground\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"BackColor = {m.Groups[2].Value}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setForeground\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"ForeColor = {m.Groups[2].Value}");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setFont\s*" + BalancedArgs, m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Font = {m.Groups[2].Value}");
+
+            // Focus & Z-order
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?requestFocusInWindow\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Focus()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?requestFocus\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Focus()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?isFocused\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Focused");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?toFront\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "BringToFront()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?toBack\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "SendToBack()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?repaint\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "Invalidate()");
+
+            // Layout & unused Swing methods
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setLayout\s*" + BalancedArgs, "// layout");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setBorder\s*\(\s*new\s+EmptyBorder\s*\((.*?)\)\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Padding = new Padding({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setBorder\s*" + BalancedArgs, "// border");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setColumns\s*\(\s*(\d+)\s*\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"Width = Math.Max(50, {int.Parse(m.Groups[2].Value) * 10})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?setColumns\s*\([^)]*\)", "// columns");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?pack\(\)", "// pack");
+
+            // Color constants
+            expr = Regex.Replace(expr, @"\bColor\.(RED|red)\b", "Color.Red");
+            expr = Regex.Replace(expr, @"\bColor\.(GREEN|green)\b", "Color.Green");
+            expr = Regex.Replace(expr, @"\bColor\.(BLUE|blue)\b", "Color.Blue");
+            expr = Regex.Replace(expr, @"\bColor\.(WHITE|white)\b", "Color.White");
+            expr = Regex.Replace(expr, @"\bColor\.(BLACK|black)\b", "Color.Black");
+            expr = Regex.Replace(expr, @"\bColor\.(YELLOW|yellow)\b", "Color.Yellow");
+            expr = Regex.Replace(expr, @"\bColor\.(CYAN|cyan)\b", "Color.Cyan");
+            expr = Regex.Replace(expr, @"\bColor\.(MAGENTA|magenta)\b", "Color.Magenta");
+            expr = Regex.Replace(expr, @"\bColor\.(GRAY|gray)\b", "Color.Gray");
+            expr = Regex.Replace(expr, @"\bColor\.(ORANGE|orange)\b", "Color.Orange");
+            expr = Regex.Replace(expr, @"\bColor\.(PINK|pink)\b", "Color.Pink");
+
+            // Container methods
+            expr = Regex.Replace(expr, @"(contentPane|panel\w*|frame|window|dialog|this)\.add\s*\(([^,)]+)\s*,\s*BorderLayout\.(CENTER|SOUTH|NORTH|EAST|WEST)\)", m =>
+            {
+                string container = m.Groups[1].Value;
+                string child = m.Groups[2].Value.Trim();
+                string pos = m.Groups[3].Value;
+                string dock = pos switch
+                {
+                    "CENTER" => "DockStyle.Fill",
+                    "SOUTH" => "DockStyle.Bottom",
+                    "NORTH" => "DockStyle.Top",
+                    "EAST" => "DockStyle.Right",
+                    "WEST" => "DockStyle.Left",
+                    _ => "DockStyle.None"
+                };
+
+                var lines = new List<string>();
+                lines.Add($"{child}.Dock = {dock};");
+                if (pos is "NORTH" or "SOUTH")
+                {
+                    if (child.StartsWith("panel") && !child.Contains("_1"))
+                    {
+                        lines.Add($"{child}.Height = 35;");
+                    }
+                    else if (child.Contains("_1") || child.Contains("Bottom") || child.Contains("Footer"))
+                    {
+                        lines.Add($"{child}.Height = 150;");
+                    }
+                }
+                if (pos == "CENTER")
+                {
+                    lines.Add($"{container}.Controls.Add({child});");
+                    lines.Add($"{child}.SendToBack()");
+                }
+                else
+                {
+                    lines.Add($"{container}.Controls.Add({child})");
+                }
+                return string.Join("\n        ", lines);
+            });
+            expr = Regex.Replace(expr, @"(contentPane|panel\w*|frame|window|dialog|this)\.add\s*\(([^)]+)\)", m =>
+            {
+                string container = m.Groups[1].Value;
+                string child = m.Groups[2].Value.Trim();
+                if (_borderPanels.Contains(container) && child.StartsWith("textArea"))
+                {
+                    return $"{child}.Dock = DockStyle.Fill;\n        {container}.Controls.Add({child});\n        {child}.SendToBack()";
+                }
+                return $"{container}.Controls.Add({child})";
+            });
+            expr = Regex.Replace(expr, @"(contentPane|panel\w*|frame|window|dialog|this)\.remove\s*\(([^)]+)\)", "$1.Controls.Remove($2)");
+            expr = Regex.Replace(expr, @"(contentPane|panel\w*|frame|window|dialog|this)\.removeAll\(\)", "$1.Controls.Clear()");
+
+            // Events: addActionListener -> Click += (sender, e) => ...
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?addActionListener\s*" + BalancedArgs, m =>
+            {
+                string target = m.Groups[1].Success ? m.Groups[1].Value + "." : "";
+                string inner = m.Groups[2].Value.Trim();
+                var lm = Regex.Match(inner, @"^(?:\(([^)]*)\)|(\w+))\s*=>\s*([\s\S]*)$");
+                if (lm.Success)
+                {
+                    string param = lm.Groups[1].Success && !string.IsNullOrEmpty(lm.Groups[1].Value) ? lm.Groups[1].Value : (lm.Groups[2].Success ? lm.Groups[2].Value : "e");
+                    string body = lm.Groups[3].Value.Trim();
+                    return $"{target}Click += (sender, {param}) => {body}";
+                }
+                return $"{target}Click += {inner}";
+            }, RegexOptions.Singleline);
+
+            // Sockets & Networking
+            expr = Regex.Replace(expr, @"\bServerSocket\b", "TcpListener");
+            expr = Regex.Replace(expr, @"\bSocket\b", "TcpClient");
+            expr = Regex.Replace(expr, @"\bPrintWriter\b", "StreamWriter");
+            expr = Regex.Replace(expr, @"\bBufferedReader\b", "StreamReader");
+            expr = Regex.Replace(expr, @"\bUnknownHostException\b", "SocketException");
+            expr = Regex.Replace(expr, @"!?\bThread\.(?:currentThread\(\)|CurrentThread)\.isInterrupted\(\)", m => m.Value.StartsWith("!") ? "true" : "false");
+            expr = Regex.Replace(expr, @"(\w+)\.toString\(\)", "$1.ToString()");
+
+            expr = Regex.Replace(expr, @"\bnew\s+TcpListener\s*\((.*?)\)", m => $"new TcpListener(IPAddress.Any, {m.Groups[1].Value}); serverSocket.Start()");
+            expr = Regex.Replace(expr, @"(\w+)\.accept\(\)", "$1.AcceptTcpClient()");
+            expr = Regex.Replace(expr, @"\bnew\s+TcpClient\s*\(([^,]+),\s*([^)]+)\)", "new TcpClient($1, $2)");
+            expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.getOutputStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
+            expr = Regex.Replace(expr, @"\bnew\s+StreamWriter\s*\((.*?)\.GetStream\(\),\s*true\)", "new StreamWriter($1.GetStream()) { AutoFlush = true }");
+            expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.getInputStream\(\)\)\)", "new StreamReader($1.GetStream())");
+            expr = Regex.Replace(expr, @"\bnew\s+StreamReader\s*\(new\s+(?:InputStreamReader|StreamReader)\s*\((.*?)\.GetStream\(\)\)\)", "new StreamReader($1.GetStream())");
+            expr = Regex.Replace(expr, @"(\w+)\.getInetAddress\(\)\.getHostAddress\(\)", "((IPEndPoint)$1.Client.RemoteEndPoint).Address.ToString()");
+            expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)\.getHostName\(\)", "Dns.GetHostName()");
+            expr = Regex.Replace(expr, @"InetAddress\.getLocalHost\(\)", "IPAddress.Loopback");
+            expr = Regex.Replace(expr, @"\bserverSocket\.close\(\)", "serverSocket.Stop()");
+            expr = Regex.Replace(expr, @"\bserverSocket\.Close\(\)", "serverSocket.Stop()");
+            expr = Regex.Replace(expr, @"new\s+Thread\s*\(\s*new\s+(\w+)\s*\((.*?)\)\s*\)", "new Thread(new $1($2).Run) { IsBackground = true }");
+
+            // NetworkInterface & Enumeration mappings
+            expr = Regex.Replace(expr, @"\bNetworkInterface\.getNetworkInterfaces\(\)", "NetworkInterface.GetAllNetworkInterfaces().Cast<NetworkInterface>().GetEnumerator()");
+            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.hasMoreElements\(\)", "$1.MoveNext()");
+            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.nextElement\(\)", "$1.Current");
+            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.isLoopback\(\)", "$1.NetworkInterfaceType == NetworkInterfaceType.Loopback");
+            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getInetAddresses\(\)", "$1.GetIPProperties().UnicastAddresses.Select(u => u.Address).GetEnumerator()");
+            expr = Regex.Replace(expr, @"(?<!\w)(\w+)\.getHostAddress\(\)", "$1.ToString()");
+        }
+
+        // Char arithmetic
+        expr = Regex.Replace(expr, @"(\w+)\s*(\[[^\]]+\])\s*\+=\s*([^;]+)", m => $"{m.Groups[1].Value}{m.Groups[2].Value} = (char)({m.Groups[1].Value}{m.Groups[2].Value} + {m.Groups[3].Value.Trim()})");
+        expr = Regex.Replace(expr, @"(\w+)\s*(\[[^\]]+\])\s*-=\s*([^;]+)", m => $"{m.Groups[1].Value}{m.Groups[2].Value} = (char)({m.Groups[1].Value}{m.Groups[2].Value} - {m.Groups[3].Value.Trim()})");
+
+        // User declared methods casing
+        if (_options.ConvertMethodCasing)
+        {
+            foreach (var mName in _declaredMethodNames)
+            {
+                if (char.IsLower(mName[0]))
+                {
+                    string pascal = CasingHelper.ToPascalCase(mName);
+                    expr = Regex.Replace(expr, @"(?<!\.)\b" + mName + @"\s*\(", pascal + "(");
+                    expr = Regex.Replace(expr, @"\.\b" + mName + @"\s*\(", "." + pascal + "(");
+                }
+            }
         }
 
         // Math mapping
@@ -720,6 +1002,15 @@ public class JavaToCSharpTranslator
         if (string.IsNullOrWhiteSpace(args)) return args;
         var parts = TypeMapper.SplitGenericArgs(args);
         return string.Join(", ", parts.ConvertAll(x => TranslateExpression(x, null)));
+    }
+
+    private static string ConvertWinFormTextNewlines(string expr)
+    {
+        if (string.IsNullOrEmpty(expr)) return expr;
+        return Regex.Replace(expr, @"""(?:[^""\\]|\\.)*""", m =>
+        {
+            return Regex.Replace(m.Value, @"(?<!\\r)(?<!\\)\\n", @"\r\n");
+        });
     }
 
     private string ConvertPackageToNamespace(string pkg)

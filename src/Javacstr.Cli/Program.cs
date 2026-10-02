@@ -93,6 +93,10 @@ public class Program
             {
                 options.MapHttpClient = false;
             }
+            else if (arg is "--no-gui")
+            {
+                options.MapGui = false;
+            }
             else if (arg.StartsWith("-") && arg != "-")
             {
                 AnsiConsole.MarkupLine($"[red]Error: Unrecognized option '{Markup.Escape(arg)}'.[/]");
@@ -166,6 +170,7 @@ public class Program
         AnsiConsole.MarkupLine("  [yellow]--no-properties[/]          Preserve fields instead of converting C# properties to Java getters/setters");
         AnsiConsole.MarkupLine("  [yellow]--no-regex[/]               Disable automatic regular expression mapping");
         AnsiConsole.MarkupLine("  [yellow]--no-http[/]                Disable HttpClient mapping");
+        AnsiConsole.MarkupLine("  [yellow]--no-gui[/]                 Disable GUI mapping (Swing/AWT <-> WinForms)");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]Examples:[/] ");
         AnsiConsole.MarkupLine("  javacstr App.java -o App.cs");

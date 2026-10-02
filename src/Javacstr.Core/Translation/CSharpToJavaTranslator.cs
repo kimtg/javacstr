@@ -62,6 +62,15 @@ public class CSharpToJavaTranslator
                 {
                     importsSet.Add("java.io.*");
                 }
+                else if (name == "System.Windows.Forms" || name == "System.Drawing")
+                {
+                    if (_options.MapGui)
+                    {
+                        importsSet.Add("javax.swing.*");
+                        importsSet.Add("java.awt.*");
+                        importsSet.Add("java.awt.event.*");
+                    }
+                }
             }
 
             foreach (var imp in importsSet)
@@ -129,7 +138,7 @@ public class CSharpToJavaTranslator
             foreach (var baseType in syntax.BaseList.Types)
             {
                 string rawType = baseType.Type.ToString();
-                string mappedType = TypeMapper.MapCSharpToJava(rawType);
+                string mappedType = TypeMapper.MapCSharpToJava(rawType, _options.MapGui);
 
                 // Guess if interface: starts with 'I' and 2nd char is uppercase, or not first
                 bool isInterface = (rawType.Length > 1 && rawType[0] == 'I' && char.IsUpper(rawType[1])) || !first || node.Kind == "interface";
@@ -201,7 +210,7 @@ public class CSharpToJavaTranslator
             mods.Add("final");
         }
 
-        string fieldType = TypeMapper.MapCSharpToJava(syntax.Declaration.Type.ToString());
+        string fieldType = TypeMapper.MapCSharpToJava(syntax.Declaration.Type.ToString(), _options.MapGui);
 
         foreach (var variable in syntax.Declaration.Variables)
         {
@@ -224,7 +233,7 @@ public class CSharpToJavaTranslator
     private void ConvertProperty(PropertyDeclarationSyntax syntax, TypeDeclarationNode parentType)
     {
         string propName = syntax.Identifier.Text;
-        string propType = TypeMapper.MapCSharpToJava(syntax.Type.ToString());
+        string propType = TypeMapper.MapCSharpToJava(syntax.Type.ToString(), _options.MapGui);
         string fieldName = CasingHelper.ToCamelCase(propName);
 
         if (_options.ConvertProperties)
@@ -303,7 +312,7 @@ public class CSharpToJavaTranslator
         {
             node.Parameters.Add(new ParameterNode
             {
-                Type = TypeMapper.MapCSharpToJava(p.Type?.ToString() ?? "object"),
+                Type = TypeMapper.MapCSharpToJava(p.Type?.ToString() ?? "object", _options.MapGui),
                 Name = p.Identifier.Text
             });
         }
@@ -336,7 +345,7 @@ public class CSharpToJavaTranslator
     {
         var node = new MethodDeclarationNode
         {
-            ReturnType = TypeMapper.MapCSharpToJava(syntax.ReturnType.ToString())
+            ReturnType = TypeMapper.MapCSharpToJava(syntax.ReturnType.ToString(), _options.MapGui)
         };
 
         // Modifiers & Override
@@ -368,7 +377,7 @@ public class CSharpToJavaTranslator
         {
             node.Parameters.Add(new ParameterNode
             {
-                Type = TypeMapper.MapCSharpToJava(p.Type?.ToString() ?? "object"),
+                Type = TypeMapper.MapCSharpToJava(p.Type?.ToString() ?? "object", _options.MapGui),
                 Name = p.Identifier.Text
             });
         }
@@ -410,7 +419,7 @@ public class CSharpToJavaTranslator
 
             case LocalDeclarationStatementSyntax localDecl:
                 var v = localDecl.Declaration.Variables.FirstOrDefault();
-                string type = TypeMapper.MapCSharpToJava(localDecl.Declaration.Type.ToString());
+                string type = TypeMapper.MapCSharpToJava(localDecl.Declaration.Type.ToString(), _options.MapGui);
                 string name = v?.Identifier.Text ?? "x";
                 string? init = v?.Initializer != null ? TranslateExpression(v.Initializer.Value.ToString()) : null;
                 return new VariableDeclarationStatementNode
@@ -465,7 +474,7 @@ public class CSharpToJavaTranslator
             case ForEachStatementSyntax forEachStmt:
                 return new ForEachStatementNode
                 {
-                    VariableType = TypeMapper.MapCSharpToJava(forEachStmt.Type.ToString()),
+                    VariableType = TypeMapper.MapCSharpToJava(forEachStmt.Type.ToString(), _options.MapGui),
                     VariableName = forEachStmt.Identifier.Text,
                     Iterable = TranslateExpression(forEachStmt.Expression.ToString()),
                     Body = ConvertStatement(forEachStmt.Statement)
@@ -490,7 +499,7 @@ public class CSharpToJavaTranslator
                 };
                 foreach (var catchClause in tryStmt.Catches)
                 {
-                    string exType = catchClause.Declaration != null ? TypeMapper.MapCSharpToJava(catchClause.Declaration.Type.ToString()) : "Exception";
+                    string exType = catchClause.Declaration != null ? TypeMapper.MapCSharpToJava(catchClause.Declaration.Type.ToString(), _options.MapGui) : "Exception";
                     string exVar = catchClause.Declaration != null ? catchClause.Declaration.Identifier.Text : "e";
                     tryNode.CatchClauses.Add(new CatchClauseNode
                     {
@@ -557,6 +566,74 @@ public class CSharpToJavaTranslator
             expr = Regex.Replace(expr, @"(\w+)\.Content\.ReadAsStringAsync\(\)\.Result", "$1.body()");
         }
 
+        // GUI / Windows Forms -> Swing / AWT mapping
+        if (_options.MapGui)
+        {
+            // Instantiations
+            expr = Regex.Replace(expr, @"\bnew\s+(Form|Panel|Button|Label|TextBox|CheckBox|RadioButton|ComboBox|ListBox|ProgressBar|TrackBar|DataGridView|MenuStrip|ToolStripMenuItem|MessageBox)\b", m => $"new {TypeMapper.MapCSharpToJava(m.Groups[1].Value, _options.MapGui)}");
+
+            // Dialogs
+            expr = Regex.Replace(expr, @"MessageBox\.Show\s*\((.*?)\s*,\s*(.*?)\)", "JOptionPane.showMessageDialog(null, $1, $2, JOptionPane.INFORMATION_MESSAGE)");
+            expr = Regex.Replace(expr, @"MessageBox\.Show\s*\((.*?)\)", "JOptionPane.showMessageDialog(null, $1)");
+
+            // Properties / setters / getters
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Text\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setText({ConvertWinFormTextCrLf(m.Groups[2].Value)})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Text\b", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "getText()");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Visible\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setVisible({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Show\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "setVisible(true)");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Hide\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "setVisible(false)");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?FormClos(?:ed|ing)\s*\+=\s*\(.*?\)\s*=>\s*(?:Application\.Exit\(\)|Environment\.Exit\(.*?\))", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE)");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Enabled\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setEnabled({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Enabled\b", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "isEnabled()");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?ReadOnly\s*=\s*true", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "setEditable(false)");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?ReadOnly\s*=\s*false", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "setEditable(true)");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?ReadOnly\b", m => "!" + (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "isEditable()");
+
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?AppendText\s*\((.*?)\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"append({ConvertWinFormTextCrLf(m.Groups[2].Value)})");
+
+            // Geometry / Location / Size
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?SetBounds\s*\((.*?)\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setBounds({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"new\s+Size\s*\((.*?)\s*,\s*(.*?)\)", "new Dimension($1, $2)");
+            expr = Regex.Replace(expr, @"new\s+Point\s*\((.*?)\s*,\s*(.*?)\)", "new Point($1, $2)");
+
+            // Visual properties
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?BackColor\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setBackground({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?ForeColor\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setForeground({m.Groups[2].Value})");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Font\s*=\s*(.*)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + $"setFont({m.Groups[2].Value})");
+
+            // Focus & Z-order
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Focus\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "requestFocus()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Focused\b", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "isFocused()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?BringToFront\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "toFront()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?SendToBack\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "toBack()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Invalidate\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "repaint()");
+            expr = Regex.Replace(expr, @"(?<!\w)(?:(\w+)\.)?Refresh\(\)", m => (m.Groups[1].Success ? m.Groups[1].Value + "." : "") + "repaint()");
+
+            // Color constants
+            expr = Regex.Replace(expr, @"\bColor\.Red\b", "Color.RED");
+            expr = Regex.Replace(expr, @"\bColor\.Green\b", "Color.GREEN");
+            expr = Regex.Replace(expr, @"\bColor\.Blue\b", "Color.BLUE");
+            expr = Regex.Replace(expr, @"\bColor\.White\b", "Color.WHITE");
+            expr = Regex.Replace(expr, @"\bColor\.Black\b", "Color.BLACK");
+            expr = Regex.Replace(expr, @"\bColor\.Yellow\b", "Color.YELLOW");
+            expr = Regex.Replace(expr, @"\bColor\.Cyan\b", "Color.CYAN");
+            expr = Regex.Replace(expr, @"\bColor\.Magenta\b", "Color.MAGENTA");
+            expr = Regex.Replace(expr, @"\bColor\.Gray\b", "Color.GRAY");
+            expr = Regex.Replace(expr, @"\bColor\.Orange\b", "Color.ORANGE");
+            expr = Regex.Replace(expr, @"\bColor\.Pink\b", "Color.PINK");
+
+            // Container methods
+            expr = Regex.Replace(expr, @"(\w+)\.Controls\.Add\s*\((.*?)\)", "$1.add($2)");
+            expr = Regex.Replace(expr, @"(\w+)\.Controls\.Remove\s*\((.*?)\)", "$1.remove($2)");
+            expr = Regex.Replace(expr, @"(\w+)\.Controls\.Clear\(\)", "$1.removeAll()");
+
+            // Events: button.Click += (sender, e) => ... -> button.addActionListener(e -> ...)
+            expr = Regex.Replace(expr, @"(\w+)\.Click\s*\+=\s*\([^,)]*,\s*([^)]*)\)\s*=>", "$1.addActionListener($2 ->");
+        }
+
         // Collections & String length / size:
         // .Length -> .length() or .length
         expr = Regex.Replace(expr, @"(\w+)\.Length\b", "$1.length()");
@@ -594,19 +671,19 @@ public class CSharpToJavaTranslator
         expr = Regex.Replace(expr, @"new\s+List<([^>]*)>\s*\(", m =>
         {
             var args = TypeMapper.SplitGenericArgs(m.Groups[1].Value);
-            var mapped = args.ConvertAll(TypeMapper.MapCSharpToJava);
+            var mapped = args.ConvertAll(arg => TypeMapper.MapCSharpToJava(arg, _options.MapGui));
             return $"new ArrayList<{string.Join(", ", mapped)}>(";
         });
         expr = Regex.Replace(expr, @"new\s+Dictionary<([^>]*)>\s*\(", m =>
         {
             var args = TypeMapper.SplitGenericArgs(m.Groups[1].Value);
-            var mapped = args.ConvertAll(TypeMapper.MapCSharpToJava);
+            var mapped = args.ConvertAll(arg => TypeMapper.MapCSharpToJava(arg, _options.MapGui));
             return $"new HashMap<{string.Join(", ", mapped)}>(";
         });
         expr = Regex.Replace(expr, @"new\s+HashSet<([^>]*)>\s*\(", m =>
         {
             var args = TypeMapper.SplitGenericArgs(m.Groups[1].Value);
-            var mapped = args.ConvertAll(TypeMapper.MapCSharpToJava);
+            var mapped = args.ConvertAll(arg => TypeMapper.MapCSharpToJava(arg, _options.MapGui));
             return $"new HashSet<{string.Join(", ", mapped)}>(";
         });
 
@@ -618,6 +695,15 @@ public class CSharpToJavaTranslator
         if (string.IsNullOrWhiteSpace(args)) return args;
         var parts = TypeMapper.SplitGenericArgs(args);
         return string.Join(", ", parts.ConvertAll(TranslateExpression));
+    }
+
+    private static string ConvertWinFormTextCrLf(string expr)
+    {
+        if (string.IsNullOrEmpty(expr)) return expr;
+        return Regex.Replace(expr, @"""(?:[^""\\]|\\.)*""", m =>
+        {
+            return Regex.Replace(m.Value, @"(?<!\\)\\r\\n", @"\n");
+        });
     }
 
     private string ConvertNamespaceToPackage(string ns)

@@ -71,7 +71,53 @@ public static class TypeMapper
         { "ClassNotFoundException", "TypeLoadException" },
         { "InstantiationException", "MemberAccessException" },
         { "IllegalAccessException", "UnauthorizedAccessException" },
-        { "UnsupportedLookAndFeelException", "NotSupportedException" }
+        { "UnsupportedLookAndFeelException", "NotSupportedException" },
+
+        // Sockets & Networking
+        { "ServerSocket", "TcpListener" },
+        { "Socket", "TcpClient" },
+        { "PrintWriter", "StreamWriter" },
+        { "BufferedReader", "StreamReader" },
+        { "InputStreamReader", "StreamReader" },
+        { "Enumeration", "IEnumerator" },
+        { "InetAddress", "IPAddress" },
+        { "NetworkInterface", "NetworkInterface" }
+    };
+
+    private static readonly Dictionary<string, string> GuiJavaToCSharpTypes = new()
+    {
+        { "JFrame", "Form" },
+        { "JDialog", "Form" },
+        { "JPanel", "Panel" },
+        { "JButton", "Button" },
+        { "JLabel", "Label" },
+        { "JTextField", "TextBox" },
+        { "JTextArea", "TextBox" },
+        { "TextArea", "TextBox" },
+        { "JPasswordField", "TextBox" },
+        { "JCheckBox", "CheckBox" },
+        { "JRadioButton", "RadioButton" },
+        { "JComboBox", "ComboBox" },
+        { "JList", "ListBox" },
+        { "JProgressBar", "ProgressBar" },
+        { "JSlider", "TrackBar" },
+        { "JTable", "DataGridView" },
+        { "JScrollPane", "Panel" },
+        { "JMenuBar", "MenuStrip" },
+        { "JMenu", "ToolStripMenuItem" },
+        { "JMenuItem", "ToolStripMenuItem" },
+        { "JOptionPane", "MessageBox" },
+        { "Color", "Color" },
+        { "Font", "Font" },
+        { "Point", "Point" },
+        { "Dimension", "Size" },
+        { "Rectangle", "Rectangle" },
+        { "Graphics", "Graphics" },
+        { "Graphics2D", "Graphics" },
+        { "Image", "Image" },
+        { "BufferedImage", "Bitmap" },
+        { "Icon", "Icon" },
+        { "ImageIcon", "Bitmap" }
     };
 
     private static readonly Dictionary<string, string> CSharpToJavaTypes = new()
@@ -132,10 +178,37 @@ public static class TypeMapper
         { "ArgumentOutOfRangeException", "IndexOutOfBoundsException" },
         { "IndexOutOfRangeException", "ArrayIndexOutOfBoundsException" },
         { "NotSupportedException", "UnsupportedOperationException" },
-        { "IOException", "IOException" }
+        { "IOException", "IOException" },
+
+        // Sockets & Networking
+        { "TcpListener", "ServerSocket" },
+        { "TcpClient", "Socket" },
+        { "StreamWriter", "PrintWriter" },
+        { "StreamReader", "BufferedReader" }
     };
 
-    public static string MapJavaToCSharp(string javaType)
+    private static readonly Dictionary<string, string> GuiCSharpToJavaTypes = new()
+    {
+        { "Form", "JFrame" },
+        { "Panel", "JPanel" },
+        { "Button", "JButton" },
+        { "Label", "JLabel" },
+        { "TextBox", "JTextField" },
+        { "CheckBox", "JCheckBox" },
+        { "RadioButton", "JRadioButton" },
+        { "ComboBox", "JComboBox" },
+        { "ListBox", "JList" },
+        { "ProgressBar", "JProgressBar" },
+        { "TrackBar", "JSlider" },
+        { "DataGridView", "JTable" },
+        { "MenuStrip", "JMenuBar" },
+        { "ToolStripMenuItem", "JMenuItem" },
+        { "MessageBox", "JOptionPane" },
+        { "Size", "Dimension" },
+        { "Bitmap", "BufferedImage" }
+    };
+
+    public static string MapJavaToCSharp(string javaType, bool mapGui = true)
     {
         if (string.IsNullOrWhiteSpace(javaType)) return javaType;
         javaType = javaType.Trim();
@@ -144,7 +217,7 @@ public static class TypeMapper
         if (javaType.EndsWith("[]"))
         {
             string elementType = javaType[..^2];
-            return MapJavaToCSharp(elementType) + "[]";
+            return MapJavaToCSharp(elementType, mapGui) + "[]";
         }
 
         // Handle generics e.g. Map<String, Integer> -> Dictionary<string, int>
@@ -154,15 +227,28 @@ public static class TypeMapper
             string baseType = javaType[..genericIdx];
             string typeArgsStr = javaType[(genericIdx + 1)..^1];
             var typeArgs = SplitGenericArgs(typeArgsStr);
-            var mappedArgs = typeArgs.ConvertAll(MapJavaToCSharp);
-            string mappedBase = JavaToCSharpTypes.TryGetValue(baseType, out var mapped) ? mapped : baseType;
+            var mappedArgs = typeArgs.ConvertAll(arg => MapJavaToCSharp(arg, mapGui));
+            string mappedBase = baseType;
+            if (mapGui && GuiJavaToCSharpTypes.TryGetValue(baseType, out var guiBase))
+            {
+                mappedBase = guiBase;
+            }
+            else if (JavaToCSharpTypes.TryGetValue(baseType, out var mapped))
+            {
+                mappedBase = mapped;
+            }
             return $"{mappedBase}<{string.Join(", ", mappedArgs)}>";
+        }
+
+        if (mapGui && GuiJavaToCSharpTypes.TryGetValue(javaType, out var guiResult))
+        {
+            return guiResult;
         }
 
         return JavaToCSharpTypes.TryGetValue(javaType, out var result) ? result : javaType;
     }
 
-    public static string MapCSharpToJava(string csharpType)
+    public static string MapCSharpToJava(string csharpType, bool mapGui = true)
     {
         if (string.IsNullOrWhiteSpace(csharpType)) return csharpType;
         csharpType = csharpType.Trim();
@@ -171,14 +257,14 @@ public static class TypeMapper
         if (csharpType.EndsWith('?'))
         {
             string nonNullable = csharpType[..^1];
-            return MapCSharpToJavaBoxed(nonNullable);
+            return MapCSharpToJavaBoxed(nonNullable, mapGui);
         }
 
         // Handle array types e.g. string[] -> String[]
         if (csharpType.EndsWith("[]"))
         {
             string elementType = csharpType[..^2];
-            return MapCSharpToJava(elementType) + "[]";
+            return MapCSharpToJava(elementType, mapGui) + "[]";
         }
 
         // Handle generics e.g. Dictionary<string, int> -> Map<String, Integer>
@@ -188,15 +274,28 @@ public static class TypeMapper
             string baseType = csharpType[..genericIdx];
             string typeArgsStr = csharpType[(genericIdx + 1)..^1];
             var typeArgs = SplitGenericArgs(typeArgsStr);
-            var mappedArgs = typeArgs.ConvertAll(MapCSharpToJavaBoxed);
-            string mappedBase = CSharpToJavaTypes.TryGetValue(baseType, out var mapped) ? mapped : baseType;
+            var mappedArgs = typeArgs.ConvertAll(arg => MapCSharpToJavaBoxed(arg, mapGui));
+            string mappedBase = baseType;
+            if (mapGui && GuiCSharpToJavaTypes.TryGetValue(baseType, out var guiBase))
+            {
+                mappedBase = guiBase;
+            }
+            else if (CSharpToJavaTypes.TryGetValue(baseType, out var mapped))
+            {
+                mappedBase = mapped;
+            }
             return $"{mappedBase}<{string.Join(", ", mappedArgs)}>";
+        }
+
+        if (mapGui && GuiCSharpToJavaTypes.TryGetValue(csharpType, out var guiResult))
+        {
+            return guiResult;
         }
 
         return CSharpToJavaTypes.TryGetValue(csharpType, out var result) ? result : csharpType;
     }
 
-    private static string MapCSharpToJavaBoxed(string csharpType)
+    private static string MapCSharpToJavaBoxed(string csharpType, bool mapGui = true)
     {
         return csharpType switch
         {
@@ -208,7 +307,7 @@ public static class TypeMapper
             "byte" or "Byte" => "Byte",
             "short" or "Int16" => "Short",
             "char" or "Char" => "Character",
-            _ => MapCSharpToJava(csharpType)
+            _ => MapCSharpToJava(csharpType, mapGui)
         };
     }
 

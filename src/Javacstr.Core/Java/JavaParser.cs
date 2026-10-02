@@ -457,6 +457,20 @@ public class JavaParser
         return new ExpressionStatementNode { Expression = raw };
     }
 
+    private static readonly HashSet<string> ValidTypeKeywords = new()
+    {
+        "boolean", "byte", "char", "double", "float", "int", "long", "short", "void", "final", "var"
+    };
+
+    private static bool IsValidTypeToken(JavaToken token)
+    {
+        if (token.Type is JavaTokenType.Identifier) return true;
+        if (token.Type is JavaTokenType.Keyword && ValidTypeKeywords.Contains(token.Text)) return true;
+        if (token.Type is JavaTokenType.Delimiter && token.Text is "." or "[" or "]" or "?" or ",") return true;
+        if (token.Type is JavaTokenType.Operator && token.Text is "<" or ">") return true;
+        return false;
+    }
+
     private bool TryParseVarDecl(string raw, out VariableDeclarationStatementNode node)
     {
         node = new VariableDeclarationStatementNode();
@@ -487,6 +501,13 @@ public class JavaParser
                 eqIdx = i;
                 break;
             }
+        }
+
+        int typeEndIdx = (eqIdx > 1) ? eqIdx - 1 : tokens.Count - 1;
+        if (typeEndIdx <= 0) return false;
+        for (int i = 0; i < typeEndIdx; i++)
+        {
+            if (!IsValidTypeToken(tokens[i])) return false;
         }
 
         if (eqIdx >= 2 && tokens[eqIdx - 2].Text == ".") return false;

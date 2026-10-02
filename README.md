@@ -31,6 +31,13 @@ A high-fidelity, bidirectional source code translator between **Java** and **C#*
   - `Pattern.CASE_INSENSITIVE` $\longleftrightarrow$ `RegexOptions.IgnoreCase`
 - **HTTPS & Web Client**:
   - `java.net.http.HttpClient` / `HttpRequest` / `HttpResponse` $\longleftrightarrow$ `System.Net.Http.HttpClient` / `HttpRequestMessage` / `HttpResponseMessage`
+- **GUI & Desktop Applications**:
+  - Swing/AWT $\longleftrightarrow$ Windows Forms & `System.Drawing`
+  - `JFrame`, `JPanel`, `JButton`, `JLabel`, `JTextField`, `JTextArea`, `JCheckBox`, `JComboBox`, `JTable`, `JList` $\longleftrightarrow$ `Form`, `Panel`, `Button`, `Label`, `TextBox`, `CheckBox`, `ComboBox`, `DataGridView`, `ListBox`
+  - `JOptionPane.showMessageDialog(...)` $\longleftrightarrow$ `MessageBox.Show(...)`
+  - `addActionListener(...)` $\longleftrightarrow$ `.Click += ...`
+  - `setText(...)`, `getText()`, `setVisible(...)`, `setEnabled(...)`, `setBounds(...)`, `Controls.Add(...)`
+  - `java.awt.Color`, `java.awt.Font` $\longleftrightarrow$ `System.Drawing.Color`, `System.Drawing.Font`
 - **CLI & User Interface**:
   - Single file translation with auto-detection or explicit `--to`
   - Batch directory translation
@@ -59,6 +66,7 @@ javacstr/
 │       ├── CSharpToJavaTests.cs
 │       ├── RegexTranslationTests.cs
 │       ├── HttpsTranslationTests.cs
+│       ├── GuiTranslationTests.cs
 │       └── RoundtripTests.cs
 └── examples/
     └── demo/UserAccount.java
@@ -103,6 +111,6 @@ dotnet run --project src/Javacstr.Cli -- ./src -o ./out
 dotnet run --project src/Javacstr.Cli -- --interactive
 
 # Custom translation flags
-dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --no-casing --block-namespaces
+dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --no-casing --block-namespaces --no-gui
 ```
 

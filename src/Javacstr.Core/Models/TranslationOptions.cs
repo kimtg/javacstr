@@ -14,6 +14,7 @@ public class TranslationOptions
     public bool UseFileScopedNamespaces { get; set; } = true;
     public bool MapRegex { get; set; } = true;
     public bool MapHttpClient { get; set; } = true;
+    public bool MapGui { get; set; } = true;
 }
 
 public class TranslationResult
