@@ -9,7 +9,7 @@ public enum TranslationDirection
 public class TranslationOptions
 {
     public TranslationDirection Direction { get; set; } = TranslationDirection.JavaToCSharp;
-    public bool ConvertMethodCasing { get; set; } = true;
+    public bool ConvertMethodCasing { get; set; } = false;
     public bool ConvertProperties { get; set; } = true;
     public bool UseFileScopedNamespaces { get; set; } = true;
     public bool MapRegex { get; set; } = true;

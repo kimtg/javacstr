@@ -104,8 +104,11 @@ dotnet test
 dotnet run --project src/Javacstr.Cli -- --help
 dotnet run --project src/Javacstr.Cli -- --version
 
-# Translate a single Java file to C#
+# Translate a single Java file to C# (default: preserves original method casing)
 dotnet run --project src/Javacstr.Cli -- input.java -o output.cs
+
+# Translate with method casing conversion (camelCase <-> PascalCase)
+dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --casing
 
 # Translate a single C# file to Java
 dotnet run --project src/Javacstr.Cli -- input.cs -o output.java
@@ -123,6 +126,38 @@ dotnet run --project src/Javacstr.Cli -- ./src -o ./out
 dotnet run --project src/Javacstr.Cli -- --interactive
 
 # Custom translation flags
-dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --no-casing --block-namespaces --no-gui
+dotnet run --project src/Javacstr.Cli -- input.java -o output.cs --casing --block-namespaces --no-gui
+```
+
+#### CLI Help Text (`javacstr --help`)
+
+```text
+javacstr - Java <-> C# Bidirectional Translator
+Usage: javacstr <input-path> [options]
+       javacstr - [options]             (read from stdin)
+
+General Options:
+  -o, --output <path>      Output file or directory
+  --to <csharp|java>       Target language (auto-detected if omitted)
+  --diff                   Show colorized side-by-side diff
+  -i, --interactive        Launch interactive REPL mode
+  -v, --version            Display version information
+  -h, --help               Show this help message
+
+Translation Flags:
+  --casing                 Convert method casing (camelCase <-> PascalCase)
+  --no-casing              Preserve original method casing (default)
+  --block-namespaces       Use C# block namespaces instead of file-scoped namespaces
+  --no-properties          Preserve fields instead of converting C# properties to Java getters/setters
+  --no-regex               Disable automatic regular expression mapping
+  --no-http                Disable HttpClient mapping
+  --no-gui                 Disable GUI mapping (Swing/AWT <-> WinForms)
+
+Examples: 
+  javacstr App.java -o App.cs
+  javacstr Service.cs -o Service.java
+  javacstr ./src -o ./converted --to csharp
+  javacstr Solution.java --diff
+  cat Solution.java | javacstr - --to csharp
 ```
 

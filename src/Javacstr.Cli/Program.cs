@@ -73,6 +73,10 @@ public class Program
             {
                 showDiff = true;
             }
+            else if (arg is "--casing" or "--convert-casing")
+            {
+                options.ConvertMethodCasing = true;
+            }
             else if (arg is "--no-casing")
             {
                 options.ConvertMethodCasing = false;
@@ -165,7 +169,8 @@ public class Program
         AnsiConsole.MarkupLine("  [yellow]-h, --help[/]               Show this help message");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]Translation Flags:[/]");
-        AnsiConsole.MarkupLine("  [yellow]--no-casing[/]              Preserve original method casing (skip PascalCase/camelCase conversion)");
+        AnsiConsole.MarkupLine("  [yellow]--casing[/]                 Convert method casing (camelCase <-> PascalCase)");
+        AnsiConsole.MarkupLine("  [yellow]--no-casing[/]              Preserve original method casing (default)");
         AnsiConsole.MarkupLine("  [yellow]--block-namespaces[/]       Use C# block namespaces instead of file-scoped namespaces");
         AnsiConsole.MarkupLine("  [yellow]--no-properties[/]          Preserve fields instead of converting C# properties to Java getters/setters");
         AnsiConsole.MarkupLine("  [yellow]--no-regex[/]               Disable automatic regular expression mapping");

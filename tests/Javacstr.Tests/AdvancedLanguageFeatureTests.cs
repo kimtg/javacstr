@@ -251,4 +251,44 @@ public class AdvancedLanguageFeatureTests
         Assert.Contains("continue;", toJava.OutputCode);
         Assert.Contains("break;", toJava.OutputCode);
     }
+
+    [Fact]
+    public void TestDefaultNoCasingAndCasingOption()
+    {
+        string java = """
+        public class MyService {
+            public void processData() {
+            }
+        }
+        """;
+
+        // Default options: ConvertMethodCasing should be false (no casing change)
+        var defaultToCs = new JavaToCSharpTranslator(new TranslationOptions()).Translate(java);
+        Assert.True(defaultToCs.Success);
+        Assert.Contains("void processData()", defaultToCs.OutputCode);
+
+        // With ConvertMethodCasing = true (casing option enabled)
+        var casingToCs = new JavaToCSharpTranslator(new TranslationOptions { ConvertMethodCasing = true }).Translate(java);
+        Assert.True(casingToCs.Success);
+        Assert.Contains("void ProcessData()", casingToCs.OutputCode);
+
+        string csharp = """
+        public class MyService
+        {
+            public void ProcessData()
+            {
+            }
+        }
+        """;
+
+        // Default options: ConvertMethodCasing should be false (no casing change)
+        var defaultToJava = new CSharpToJavaTranslator(new TranslationOptions()).Translate(csharp);
+        Assert.True(defaultToJava.Success);
+        Assert.Contains("void ProcessData()", defaultToJava.OutputCode);
+
+        // With ConvertMethodCasing = true (casing option enabled)
+        var casingToJava = new CSharpToJavaTranslator(new TranslationOptions { ConvertMethodCasing = true }).Translate(csharp);
+        Assert.True(casingToJava.Success);
+        Assert.Contains("void processData()", casingToJava.OutputCode);
+    }
 }

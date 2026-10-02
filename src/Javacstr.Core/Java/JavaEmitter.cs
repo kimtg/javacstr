@@ -351,6 +351,53 @@ public class JavaEmitter
                 }
                 break;
 
+            case BreakStatementNode breakStmt:
+                Indent();
+                if (!string.IsNullOrEmpty(breakStmt.Label))
+                    _sb.AppendLine($"break {breakStmt.Label};");
+                else
+                    _sb.AppendLine("break;");
+                break;
+
+            case ContinueStatementNode contStmt:
+                Indent();
+                if (!string.IsNullOrEmpty(contStmt.Label))
+                    _sb.AppendLine($"continue {contStmt.Label};");
+                else
+                    _sb.AppendLine("continue;");
+                break;
+
+            case SynchronizedStatementNode syncStmt:
+                Indent();
+                _sb.AppendLine($"synchronized ({syncStmt.Expression})");
+                EmitStatement(syncStmt.Body);
+                break;
+
+            case SwitchStatementNode swStmt:
+                Indent();
+                _sb.AppendLine($"switch ({swStmt.Expression})");
+                Indent();
+                _sb.AppendLine("{");
+                _indentLevel++;
+                foreach (var sec in swStmt.Sections)
+                {
+                    foreach (var lbl in sec.Labels)
+                    {
+                        Indent();
+                        _sb.AppendLine(lbl);
+                    }
+                    _indentLevel++;
+                    foreach (var s in sec.Statements)
+                    {
+                        EmitStatement(s);
+                    }
+                    _indentLevel--;
+                }
+                _indentLevel--;
+                Indent();
+                _sb.AppendLine("}");
+                break;
+
             case RawStatementNode rawStmt:
                 Indent();
                 _sb.AppendLine(rawStmt.Text.EndsWith(";") ? rawStmt.Text : rawStmt.Text + ";");

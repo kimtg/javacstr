@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -514,6 +515,93 @@ public class CSharpToJavaTranslator
                 }
                 return tryNode;
 
+            case UsingStatementSyntax usingStmt:
+            {
+                string resSpec = "";
+                if (usingStmt.Declaration != null)
+                {
+                    var uVar = usingStmt.Declaration.Variables.FirstOrDefault();
+                    string uType = TypeMapper.MapCSharpToJava(usingStmt.Declaration.Type.ToString(), _options.MapGui);
+                    string uName = uVar?.Identifier.Text ?? "res";
+                    string uInit = uVar?.Initializer != null ? TranslateExpression(uVar.Initializer.Value.ToString()) : "";
+                    resSpec = $"{uType} {uName} = {uInit}";
+                }
+                else if (usingStmt.Expression != null)
+                {
+                    resSpec = TranslateExpression(usingStmt.Expression.ToString());
+                }
+
+                BlockStatementNode usingBodyNode;
+                if (usingStmt.Statement is BlockSyntax uBlock)
+                {
+                    usingBodyNode = ConvertBlock(uBlock);
+                }
+                else
+                {
+                    usingBodyNode = new BlockStatementNode();
+                    usingBodyNode.Statements.Add(ConvertStatement(usingStmt.Statement));
+                }
+
+                return new TryStatementNode
+                {
+                    ResourceSpecification = resSpec,
+                    Body = usingBodyNode
+                };
+            }
+
+            case LockStatementSyntax lockStmt:
+            {
+                BlockStatementNode lockBodyNode;
+                if (lockStmt.Statement is BlockSyntax lBlock)
+                {
+                    lockBodyNode = ConvertBlock(lBlock);
+                }
+                else
+                {
+                    lockBodyNode = new BlockStatementNode();
+                    lockBodyNode.Statements.Add(ConvertStatement(lockStmt.Statement));
+                }
+
+                return new SynchronizedStatementNode
+                {
+                    Expression = TranslateExpression(lockStmt.Expression.ToString()),
+                    Body = lockBodyNode
+                };
+            }
+
+            case BreakStatementSyntax:
+                return new BreakStatementNode();
+
+            case ContinueStatementSyntax:
+                return new ContinueStatementNode();
+
+            case SwitchStatementSyntax switchStmt:
+                var swNode = new SwitchStatementNode
+                {
+                    Expression = TranslateExpression(switchStmt.Expression.ToString())
+                };
+                foreach (var sec in switchStmt.Sections)
+                {
+                    var secNode = new SwitchSectionNode();
+                    foreach (var lbl in sec.Labels)
+                    {
+                        if (lbl is CaseSwitchLabelSyntax caseLbl)
+                        {
+                            secNode.Labels.Add($"case {TranslateExpression(caseLbl.Value.ToString())}:");
+                        }
+                        else if (lbl is DefaultSwitchLabelSyntax)
+                        {
+                            secNode.Labels.Add("default:");
+                        }
+                    }
+                    foreach (var s in sec.Statements)
+                    {
+                        secNode.Statements.Add(ConvertStatement(s));
+                    }
+                    swNode.Sections.Add(secNode);
+                }
+                return swNode;
+
             default:
                 return new RawStatementNode(TranslateExpression(stmt.ToString().TrimEnd(';')));
         }
@@ -522,6 +610,26 @@ public class CSharpToJavaTranslator
     public string TranslateExpression(string expr)
     {
         if (string.IsNullOrWhiteSpace(expr)) return expr;
+
+        // String interpolation $"Hello, {name}!" -> "Hello, " + name + "!"
+        expr = ConvertInterpolatedStrings(expr);
+
+        // Streams mapping
+        expr = Regex.Replace(expr, @"new\s+StreamReader\s*\((.*?)\)", "new BufferedReader(new FileReader($1))");
+        expr = Regex.Replace(expr, @"new\s+StreamWriter\s*\((.*?)\)", "new PrintWriter(new FileWriter($1))");
+        expr = Regex.Replace(expr, @"(\w+)\.ReadLine\(\)", "$1.readLine()");
+
+        // String formatting & constants
+        expr = Regex.Replace(expr, @"\b(?:string|String)\.Format\s*\(", "String.format(");
+        expr = Regex.Replace(expr, @"\b(?:string|String)\.Join\s*\(", "String.join(");
+        expr = Regex.Replace(expr, @"\bint\.MaxValue\b", "Integer.MAX_VALUE");
+        expr = Regex.Replace(expr, @"\bint\.MinValue\b", "Integer.MIN_VALUE");
+        expr = Regex.Replace(expr, @"\blong\.MaxValue\b", "Long.MAX_VALUE");
+        expr = Regex.Replace(expr, @"\blong\.MinValue\b", "Long.MIN_VALUE");
+        expr = Regex.Replace(expr, @"\bdouble\.MaxValue\b", "Double.MAX_VALUE");
+        expr = Regex.Replace(expr, @"\bdouble\.MinValue\b", "Double.MIN_VALUE");
+        expr = Regex.Replace(expr, @"\bfloat\.MaxValue\b", "Float.MAX_VALUE");
+        expr = Regex.Replace(expr, @"\bfloat\.MinValue\b", "Float.MIN_VALUE");
 
         // is -> instanceof
         expr = Regex.Replace(expr, @"\bis\s+([A-Za-z0-9_<>]+)", m => $"instanceof {TypeMapper.MapCSharpToJava(m.Groups[1].Value)}");
@@ -703,6 +811,66 @@ public class CSharpToJavaTranslator
         return Regex.Replace(expr, @"""(?:[^""\\]|\\.)*""", m =>
         {
             return Regex.Replace(m.Value, @"(?<!\\)\\r\\n", @"\n");
+        });
+    }
+
+    private static string ConvertInterpolatedStrings(string expr)
+    {
+        if (!expr.Contains("$\"")) return expr;
+
+        return Regex.Replace(expr, @"\$""((?:[^""\\]|\\.)*?)""", m =>
+        {
+            string content = m.Groups[1].Value;
+            var parts = new List<string>();
+            var sb = new StringBuilder();
+            int i = 0;
+            while (i < content.Length)
+            {
+                if (content[i] == '{' && i + 1 < content.Length && content[i + 1] == '{')
+                {
+                    sb.Append('{');
+                    i += 2;
+                }
+                else if (content[i] == '}' && i + 1 < content.Length && content[i + 1] == '}')
+                {
+                    sb.Append('}');
+                    i += 2;
+                }
+                else if (content[i] == '{')
+                {
+                    if (sb.Length > 0)
+                    {
+                        parts.Add($"\"{sb}\"");
+                        sb.Clear();
+                    }
+                    int depth = 1;
+                    int start = i + 1;
+                    i++;
+                    while (i < content.Length && depth > 0)
+                    {
+                        if (content[i] == '{') depth++;
+                        else if (content[i] == '}') depth--;
+                        if (depth > 0) i++;
+                    }
+                    string inner = content.Substring(start, i - start);
+                    parts.Add(inner.Trim());
+                    i++; // skip '}'
+                }
+                else
+                {
+                    sb.Append(content[i]);
+                    i++;
+                }
+            }
+            if (sb.Length > 0)
+            {
+                parts.Add($"\"{sb}\"");
+            }
+
+            if (parts.Count == 0) return "\"\"";
+            if (parts.Count == 1 && !parts[0].StartsWith("\""))
+                return "\"\" + " + parts[0];
+            return string.Join(" + ", parts);
         });
     }
 

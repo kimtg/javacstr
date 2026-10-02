@@ -163,6 +163,34 @@ public class TryStatementNode : StatementNode
     public BlockStatementNode? FinallyBlock { get; set; }
 }
 
+public class BreakStatementNode : StatementNode
+{
+    public string? Label { get; set; }
+}
+
+public class ContinueStatementNode : StatementNode
+{
+    public string? Label { get; set; }
+}
+
+public class SynchronizedStatementNode : StatementNode
+{
+    public string Expression { get; set; } = string.Empty;
+    public StatementNode Body { get; set; } = new BlockStatementNode();
+}
+
+public class SwitchSectionNode : JavaNode
+{
+    public List<string> Labels { get; set; } = new();
+    public List<StatementNode> Statements { get; set; } = new();
+}
+
+public class SwitchStatementNode : StatementNode
+{
+    public string Expression { get; set; } = string.Empty;
+    public List<SwitchSectionNode> Sections { get; set; } = new();
+}
+
 public class RawStatementNode : StatementNode
 {
     public string Text { get; set; } = string.Empty;
